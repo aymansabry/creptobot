@@ -1,9 +1,8 @@
-aiogram==3.4
-python-dotenv==1.0.0
-sqlalchemy==2.0.30
-aiohttp==3.9.5
-web3==6.18.0
-openai==1.33.0
-cryptography==42.0.7
-pyyaml==6.0.1
-pycryptodome==3.20.0
+aiogram==3.4.1
+openai
+requests
+python-dotenv
+sqlalchemy
+uvicorn
+fastapi
+
