@@ -1,18 +1,24 @@
 from aiogram import Dispatcher, types
-from bot.wallet import create_virtual_wallet, get_user_wallet
-from bot.db import get_session
-from bot.models import User
+from aiogram.filters import CommandStart
+from .wallet import get_user_wallet, create_virtual_wallet
+
+async def start_handler(message: types.Message):
+    user_id = message.from_user.id
+    wallet = get_user_wallet(user_id)
+    if wallet:
+        await message.answer(f"🎉 مرحبًا مجددًا! محفظتك المسجلة: {wallet}")
+    else:
+        await message.answer("👋 مرحبًا! لم يتم ربط أي محفظة بعد.\nأرسل عنوان محفظتك لربطها.")
+
+async def wallet_handler(message: types.Message):
+    user_id = message.from_user.id
+    address = message.text.strip()
+    if address.startswith("0x") and len(address) >= 42:  # تحقق مبدئي من عنوان إيثيريوم
+        create_virtual_wallet(user_id, address)
+        await message.answer(f"✅ تم ربط محفظتك بنجاح: {address}")
+    else:
+        await message.answer("❌ عنوان المحفظة غير صالح. يرجى التأكد وإعادة الإرسال.")
 
 def register_handlers(dp: Dispatcher):
-    @dp.message()
-    async def handle_message(message: types.Message):
-        session = get_session()
-        user = session.query(User).filter(User.telegram_id == message.from_user.id).first()
-        if not user:
-            wallet = create_virtual_wallet()
-            user = User(telegram_id=message.from_user.id, wallet_address=wallet, country="unknown")
-            session.add(user)
-            session.commit()
-            await message.answer(f"Welcome! Your wallet: {wallet}")
-        else:
-            await message.answer(f"Your wallet: {user.wallet_address}")
+    dp.message.register(start_handler, CommandStart())
+    dp.message.register(wallet_handler)
