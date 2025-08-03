@@ -1,8 +1,4 @@
 aiogram==3.4.1
-openai
-requests
-python-dotenv
-sqlalchemy
-uvicorn
-fastapi
-
+SQLAlchemy==2.0.30
+asyncpg==0.29.0
+python-dotenv==1.0.1
