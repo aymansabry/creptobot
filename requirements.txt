@@ -1,3 +1,4 @@
-aiogram==3.0.0b7
-sqlmodel==0.0.8
+aiogram==3.4.1
+SQLAlchemy==2.0.30
+asyncpg==0.29.0
 python-dotenv==1.0.1
