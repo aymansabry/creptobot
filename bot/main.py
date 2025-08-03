@@ -2,7 +2,7 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from bot.config import BOT_TOKEN
 from bot.handlers import register_handlers
-from bot.db import create_db_and_tables
+from bot.database import create_db_and_tables
 
 async def main():
     await create_db_and_tables()
@@ -13,4 +13,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
