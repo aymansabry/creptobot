@@ -1,4 +1,6 @@
-aiogram==2.25.1
-SQLAlchemy==2.0.21
-python-dotenv==1.0.1
-mysql-connector-python==8.3.0
+python-telegram-bot==20.7
+sqlalchemy
+aiohttp
+requests
+python-dotenv
+python-binance
