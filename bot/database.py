@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from config import Config
+from config import DATABASE_URL
 
 Base = declarative_base()
 
@@ -10,12 +10,9 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True)
     first_name = Column(String(50))
-    last_name = Column(String(50))
-    balance = Column(Integer, default=0)  # رصيد USD
 
-# الاتصال بقاعدة البيانات
-engine = create_engine(Config.DATABASE_URL)
-Base.metadata.create_all(engine)  # إنشاء الجداول إذا غير موجودة
+engine = create_engine(DATABASE_URL)
+Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
 def get_db():
