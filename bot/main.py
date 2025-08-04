@@ -1,7 +1,6 @@
 from telegram.ext import Application
-from core.config import settings
-from handlers.user import UserHandler
-from handlers.trading import TradingHandler
+from config import Config
+from handlers import setup_handlers
 import logging
 
 logging.basicConfig(
@@ -9,17 +8,14 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-def setup_handlers(app):
-    user_handler = UserHandler()
-    trading_handler = TradingHandler()
-    
-    app.add_handler(CommandHandler("start", user_handler.start))
-    app.add_handler(MessageHandler(filters.TEXT, user_handler.handle_message))
-
 def main():
-    app = Application.builder().token(settings.TELEGRAM_TOKEN).build()
-    setup_handlers(app)
-    app.run_polling()
+    try:
+        app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+        setup_handlers(app)
+        logging.info("✅ تم تشغيل البوت بنجاح")
+        app.run_polling()
+    except Exception as e:
+        logging.error(f"فشل التشغيل: {e}")
 
 if __name__ == "__main__":
     main()
