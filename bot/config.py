@@ -1,18 +1,10 @@
-iimport os
+import os
 
-class Config:
-    # إعدادات обязательные
-    TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # توكن البوت
-    DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///db.sqlite')  # auto-convert for Railway
-    
-    # تحويل رابط PostgreSQL إذا لزم الأمر
-    if DATABASE_URL.startswith('postgres://'):
-        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-    
-    @classmethod
-    def validate(cls):
-        if not cls.TELEGRAM_TOKEN:
-            raise ValueError("يجب تعيين TELEGRAM_TOKEN في متغيرات البيئة")
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///database.db')
 
-# التحقق التلقائي عند الاستيراد
-Config.validate()
+if not TELEGRAM_TOKEN:
+    raise ValueError("TELEGRAM_TOKEN missing in environment variables")
+
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
