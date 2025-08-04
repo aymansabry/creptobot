@@ -9,13 +9,9 @@ logging.basicConfig(
 )
 
 def main():
-    try:
-        app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
-        setup_handlers(app)
-        logging.info("Starting bot with button menu...")
-        app.run_polling()
-    except Exception as e:
-        logging.error(f"Failed to start: {e}")
+    app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+    setup_handlers(app)
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
