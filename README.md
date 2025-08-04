@@ -1,12 +1,23 @@
-# Crypto Telegram Bot
+# 🤖 AI Crypto Trading Bot
 
-A production-ready Telegram bot for managing user wallets.
+بوت تداول العملات الرقمية باستخدام الذكاء الاصطناعي على Telegram.
 
-## Setup
+## 🚀 طريقة التشغيل
 
-1. Create `.env` file from `.env.example`
-2. Run:
-
+### 1. التثبيت
 ```bash
 pip install -r requirements.txt
-python main.py
+```
+
+### 2. إعداد المتغيرات
+قم بإنشاء ملف `.env` بناءً على `.env.example`.
+
+### 3. التشغيل محليًا
+```bash
+python -m app
+```
+
+### 4. التشغيل على Railway
+- ارفع المشروع على GitHub
+- اربطه بـ Railway
+- أضف المتغيرات البيئية من `.env.example`
