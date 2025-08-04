@@ -26,7 +26,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"خطأ في التسجيل: {e}")
-        db.rollback()  # التراجع عن التغييرات في حالة الخطأ
+        db.rollback()
         await update.message.reply_text("حدث خطأ تقني، يرجى المحاولة لاحقاً")
     finally:
         db.close()
+
+def setup_handlers(application):
+    application.add_handler(CommandHandler("start", start))
