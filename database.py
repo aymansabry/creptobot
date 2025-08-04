@@ -1,31 +1,41 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
-import datetime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+import os
+from dotenv import load_dotenv
 
-DATABASE_URL = "sqlite+aiosqlite:///./database.db"
+load_dotenv()
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+DATABASE_URL = os.getenv('DATABASE_URL')
+
 Base = declarative_base()
 
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(Integer, unique=True, index=True)
-    wallet_address = Column(String)
-    trust_score = Column(Float, default=1.0)
-    role = Column(String, default="user")
-
-class Transaction(Base):
-    __tablename__ = "transactions"
-    id = Column(Integer, primary_key=True, index=True)
+class Conversation(Base):
+    __tablename__ = 'conversations'
+    
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer)
     user_id = Column(Integer)
-    amount = Column(Float)
-    profit = Column(Float)
-    status = Column(String)  # success / failed / pending
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    username = Column(String)
+    first_name = Column(String)
+    last_name = Column(String)
+    message = Column(Text)
+    response = Column(Text)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<Conversation(chat_id={self.chat_id}, user_id={self.user_id}, message='{self.message}')>"
 
-async def create_db_and_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+def init_db():
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
+    return engine
+
+def get_session(engine):
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+# Initialize database
+engine = init_db()
+Session = get_session(engine)
