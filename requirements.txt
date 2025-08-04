@@ -1,4 +1,4 @@
-python-telegram-bot==20.4
+python-telegram-bot[ext]>=20.0
 ccxt==4.2.19
 sqlalchemy==2.0.19
 psycopg2-binary==2.9.7
