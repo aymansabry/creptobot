@@ -6,3 +6,4 @@ sqlalchemy==2.0.19
 apscheduler==3.10.1
 psycopg2-binary==2.9.7
 python-dotenv==1.0.0
+python-decouple==3.8
