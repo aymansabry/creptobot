@@ -1,27 +1,28 @@
-# Use official Python image
+# Use lightweight Python image
 FROM python:3.10-slim
-
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
 
 # Install system dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc python3-dev && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Set work directory
+# Create and activate virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
 WORKDIR /app
 
-# Copy requirements first (for caching)
+# Install dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy entire project
+# Copy application
 COPY . .
 
-# Run the bot (using polling mode)
+# Run the bot
 CMD ["python", "bot/main.py"]
