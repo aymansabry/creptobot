@@ -1,1 +1,1 @@
-worker: python main.py
+worker: python -m pip install -r requirements.txt && python main.py
