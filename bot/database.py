@@ -1,77 +1,21 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
 from config import Config
-import json
 
 Base = declarative_base()
 
 class User(Base):
     __tablename__ = 'users'
-    
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, index=True)
-    username = Column(String(100))
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    language = Column(String(10), default='ar')
-    registration_date = Column(DateTime, default=datetime.utcnow)
-    wallet_address = Column(String(100))
-    balance = Column(Float, default=0)
-    is_active = Column(Boolean, default=True)
-    last_interaction = Column(DateTime)
+    telegram_id = Column(Integer, unique=True)
+    username = Column(String)
+    first_name = Column(String)
+    last_name = Column(String)
 
-class Transaction(Base):
-    __tablename__ = 'transactions'
-    
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True)
-    transaction_type = Column(String(20))  # 'deposit', 'withdrawal', 'investment', 'profit'
-    amount = Column(Float)
-    currency = Column(String(10))
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    status = Column(String(20))  # 'pending', 'completed', 'failed'
-    details = Column(JSON)
+engine = create_engine(Config.DATABASE_URL)
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
 
-class Trade(Base):
-    __tablename__ = 'trades'
-    
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True)
-    trade_type = Column(String(20))  # 'arbitrage', 'continuous'
-    buy_currency = Column(String(10))
-    sell_currency = Column(String(10))
-    buy_price = Column(Float)
-    sell_price = Column(Float)
-    amount = Column(Float)
-    profit = Column(Float)
-    fee = Column(Float)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    status = Column(String(20))  # 'open', 'completed', 'failed'
-    trade_info = Column(JSON)  # Changed from 'metadata' to 'trade_info'
-
-class Report(Base):
-    __tablename__ = 'reports'
-    
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True)
-    start_date = Column(DateTime)
-    end_date = Column(DateTime)
-    report_data = Column(JSON)
-    generated_at = Column(DateTime, default=datetime.utcnow)
-
-# Initialize database with Railway-compatible connection
-def init_db():
-    db_url = Config.DATABASE_URL
-    if db_url.startswith('postgres://'):
-        db_url = db_url.replace('postgres://', 'postgresql://', 1)
-    engine = create_engine(db_url)
-    Base.metadata.create_all(engine)
-    return engine
-
-# Database session factory
 def get_db_session():
-    engine = init_db()
-    Session = sessionmaker(bind=engine)
     return Session()
