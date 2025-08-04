@@ -1,31 +1,42 @@
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from database import get_db, User
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def create_menu():
+    """لوحة الأزرار الرئيسية"""
+    return ReplyKeyboardMarkup([
+        ["📊 فرص تداول", "💼 رصيدي"],
+        ["⚙️ الإعدادات", "🆘 المساعدة"]
+    ], resize_keyboard=True)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        db = get_db()
         user = update.effective_user
-        session = get_db_session()
         
-        # تحقق إذا كان المستخدم مسجلاً بالفعل
-        existing_user = session.query(User).filter_by(telegram_id=user.id).first()
-        
-        if not existing_user:
-            new_user = User(
+        # تسجيل المستخدم إذا غير موجود
+        if not db.query(User).filter_by(telegram_id=user.id).first():
+            db.add(User(
                 telegram_id=user.id,
-                username=user.username,
                 first_name=user.first_name,
-                last_name=user.last_name if user.last_name else None  # جعلها اختيارية
-            )
-            
-            session.add(new_user)
-            session.commit()
-            logger.info(f"تم تسجيل مستخدم جديد: {user.id}")
+                last_name=user.last_name or ""
+            ))
+            db.commit()
         
         await update.message.reply_text(
-            "مرحباً بك! اختر من القائمة:",
-            reply_markup=create_main_menu()
+            "مرحباً بك في بوت التداول الذكي!",
+            reply_markup=create_menu()
         )
-        
     except Exception as e:
-        logger.error(f"خطأ في التسجيل: {e}")
-        await update.message.reply_text("حدث خطأ في النظام، يرجى المحاولة لاحقاً")
-        
+        logger.error(f"خطأ في /start: {e}")
+        await update.message.reply_text("حدث خطأ، يرجى المحاولة لاحقاً")
     finally:
-        session.close()
+        db.close()
+
+def setup_handlers(app):
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
