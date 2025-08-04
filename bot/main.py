@@ -1,8 +1,7 @@
 import logging
 from telegram.ext import Application
-from bot.handlers import setup_handlers
-from bot.config import Config
-from bot.database import init_db
+from handlers import setup_handlers  # Now using direct import
+from config import Config
 
 # Initialize logging
 logging.basicConfig(
@@ -11,29 +10,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def post_init(app):
-    """Initialize application components"""
-    logger.info("Initializing database...")
-    init_db()
-    logger.info("Application startup complete")
-
 def main():
-    """Run the bot"""
     try:
-        # Create Application
-        application = Application.builder() \
-            .token(Config.TELEGRAM_TOKEN) \
-            .post_init(post_init) \
-            .build()
-        
-        # Setup handlers
+        application = Application.builder().token(Config.TELEGRAM_TOKEN).build()
         setup_handlers(application)
-        
-        logger.info("Starting bot in polling mode...")
         application.run_polling()
-        
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.error(f"Failed to start bot: {e}")
         raise
 
 if __name__ == '__main__':
