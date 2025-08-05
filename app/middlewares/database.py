@@ -1,7 +1,14 @@
 # app/middlewares/database.py
 from aiogram import Dispatcher
-from app.database.session import get_session
-from app.utils.database_middleware import DatabaseSessionMiddleware
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from app.database.session import engine
+
+session_maker = async_sessionmaker(engine, expire_on_commit=False)
+
 
 async def setup_database(dp: Dispatcher):
-    dp.update.middleware(DatabaseSessionMiddleware(session_pool=get_session()))
+    async def on_startup(dispatcher: Dispatcher):
+        pass  # يمكن إضافة منطق تهيئة الجداول هنا لاحقاً إذا لزم الأمر
+
+    dp.startup.register(on_startup)
