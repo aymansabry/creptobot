@@ -1,8 +1,14 @@
 # app/services/__init__.py
-from .binance import get_binance_price
-from .exchanges import fetch_arbitrage_opportunities
+from .wallet import WalletService
+from .investment import InvestmentService
+from .admin import AdminService
+from .exchange import ExchangeService
+from .support import SupportService
 
 __all__ = [
-    "get_binance_price",
-    "fetch_arbitrage_opportunities"
+    "WalletService",
+    "InvestmentService",
+    "AdminService",
+    "ExchangeService",
+    "SupportService"
 ]
