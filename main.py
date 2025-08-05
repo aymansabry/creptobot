@@ -1,37 +1,50 @@
 import logging
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-from config.config import Config
-from handlers import (
-    user_handlers,
-    admin_handlers,
-    error_handlers
-)
-from database.db_init import init_db
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from config.settings import settings
+from handlers import user_handlers, admin_handlers, trade_handlers
+from utils.logger import setup_logger
+from services.trade_service import TradeService
+from ai.market_analysis import MarketAnalyzer
 
-# إعداد التسجيل
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# إعداد السجل
+setup_logger()
+logger = logging.getLogger(__name__)
 
-async def post_init(application):
-    await init_db()
+# تهيئة البوت
+bot = Bot(token=settings.BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 
-def main():
-    # إنشاء تطبيق البوت
-    application = Application.builder().token(Config.TELEGRAM_TOKEN).post_init(post_init).build()
-    
-    # إضافة معالجات الأوامر
-    application.add_handler(CommandHandler("start", user_handlers.start))
-    
-    # إضافة معالجات الأزرار
-    application.add_handler(CallbackQueryHandler(user_handlers.show_investment_opportunities, pattern="^show_opportunities$"))
-    
-    # إضافة معالجات الأخطاء
-    application.add_error_handler(error_handlers.error_handler)
-    
-    # بدء البوت
-    application.run_polling()
+# تسجيل المعالجات
+user_handlers.register_handlers(dp)
+admin_handlers.register_handlers(dp)
+trade_handlers.register_handlers(dp)
 
-if __name__ == "__main__":
-    main()
+# خدمات الخلفية
+trade_service = TradeService()
+market_analyzer = MarketAnalyzer()
+
+async def on_startup(dp):
+    """إجراءات بدء التشغيل"""
+    logger.info("بدء تشغيل البوت")
+    
+    # بدء المهام الدورية
+    from utils.scheduler import start_scheduler
+    await start_scheduler(dp)
+
+async def on_shutdown(dp):
+    """إجراءات إيقاف التشغيل"""
+    logger.info("إيقاف البوت")
+    await dp.storage.close()
+    await dp.storage.wait_closed()
+    await bot.close()
+
+if __name__ == '__main__':
+    from aiogram import executor
+    executor.start_polling(
+        dp,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True
+    )
