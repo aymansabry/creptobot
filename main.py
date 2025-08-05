@@ -1,14 +1,18 @@
+# main.py
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
+
 from config.config import BOT_TOKEN
 from app.handlers.user import user_router
 from app.handlers.admin import admin_router
 from app.middlewares.database import setup_database
+from app.services.binance_service import initialize_binance_client
 
 async def main():
     logging.basicConfig(level=logging.INFO)
+    
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     dp = Dispatcher()
 
@@ -16,6 +20,7 @@ async def main():
     dp.include_router(admin_router)
 
     await setup_database(dp)
+    await initialize_binance_client()  # تهيئة Binance client
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
