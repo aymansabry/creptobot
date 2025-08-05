@@ -3,7 +3,9 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 admin_main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📊 لوحة التحكم")],
+        [KeyboardButton(text="📈 إحصائيات البوت"), KeyboardButton(text="🧮 ضبط النسبة")],
+        [KeyboardButton(text="👥 العملاء"), KeyboardButton(text="💼 صفقات نشطة")],
+        [KeyboardButton(text="📨 تذاكر الدعم")]
     ],
     resize_keyboard=True
 )
