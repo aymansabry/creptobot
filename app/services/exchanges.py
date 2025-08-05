@@ -1,13 +1,20 @@
-# app/services/exchanges.py
-from app.services.binance import get_binance_price
+# app/services/exchange.py
+import os
+import openai
 
-async def fetch_arbitrage_opportunities():
-    # This should include real exchange APIs (mocked here)
-    binance_price = await get_binance_price()
-    fake_local_price = binance_price * 1.03  # simulate a 3% profit opportunity
-    return [{
-        "exchange": "Binance",
-        "price": binance_price,
-        "local_price": fake_local_price,
-        "profit_percent": round(((fake_local_price - binance_price) / binance_price) * 100, 2)
-    }]
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+class ExchangeService:
+
+    @staticmethod
+    async def analyze_opportunities():
+        prompt = "حلل فرص التداول بين المنصات المختلفة لتحقيق أرباح آمنة"
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "أنت خبير في تحليل أسعار العملات الرقمية"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5
+        )
+        return response.choices[0].message.content.strip()
