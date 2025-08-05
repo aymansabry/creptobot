@@ -1,7 +1,6 @@
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.dispatcher.filters import Command
 from config.settings import settings
 import asyncio
 
@@ -32,16 +31,16 @@ def verify_settings():
 
 # Initialize bot and dispatcher
 bot = Bot(token=settings.BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
 # Register handlers
-@dp.message(Command("start"))
-async def start_handler(message: Message):
+@dp.message_handler(commands=['start'])
+async def start_handler(message: types.Message):
     await message.answer("🚀 Welcome to the Arbitrage Bot!")
     logger.info(f"New user started: {message.from_user.id}")
 
-@dp.message(Command("admin"))
-async def admin_handler(message: Message):
+@dp.message_handler(commands=['admin'])
+async def admin_handler(message: types.Message):
     if message.from_user.id not in settings.ADMIN_IDS:
         await message.answer("⛔ You are not authorized!")
         return
@@ -51,19 +50,14 @@ async def admin_handler(message: Message):
 
 async def main():
     try:
-        # Verify settings before starting
         verify_settings()
-        
         logger.info("Starting bot polling...")
-        await dp.start_polling(bot)
+        await dp.start_polling()
     except Exception as e:
         logger.error(f"Bot failed: {str(e)}")
     finally:
-        await bot.session.close()
+        await bot.close()
 
 if __name__ == "__main__":
-    # Print loaded settings for debugging
-    logger.info(f"Loaded settings: {settings.model_dump_json(indent=2)}")
-    
-    # Start the bot
+    logger.info(f"Loaded settings: {settings}")
     asyncio.run(main())
