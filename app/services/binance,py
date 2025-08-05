@@ -1,0 +1,10 @@
+# app/services/binance.py
+import aiohttp
+
+BINANCE_API = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+
+async def get_binance_price():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(BINANCE_API) as resp:
+            data = await resp.json()
+            return float(data["price"])
