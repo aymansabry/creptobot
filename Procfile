@@ -1,2 +1,2 @@
-web: gunicorn --bind 0.0.0.0:$PORT --worker-class uvicorn.workers.UvicornWorker main:dp
+web: python main.py
 worker: python main.py
