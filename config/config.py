@@ -3,25 +3,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-class Settings:
+class Config:
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    POSTGRES_DB = os.getenv("POSTGRES_DB")
+    POSTGRES_USER = os.getenv("POSTGRES_USER")
+    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+    POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+    POSTGRES_PORT = os.getenv("POSTGRES_PORT")
 
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-    BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
+    BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
-    OWNER_TRON_WALLET = os.getenv("OWNER_WALLET_ADDRESS")
-    CENTRAL_BNB_WALLET = os.getenv("CENTRAL_BNB_WALLET")
+    TRON_API_KEY = os.getenv("TRON_API_KEY")
+    TRON_WALLET_ADDRESS = os.getenv("TRON_WALLET_ADDRESS")  # عمولة البوت
 
-    AI_API_KEY = os.getenv("AI_API_KEY")
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
+    CENTRAL_WALLET_ADDRESS = os.getenv("CENTRAL_WALLET_ADDRESS")  # محفظة المستثمرين المركزية
 
     MIN_INVEST = float(os.getenv("MIN_INVEST", 10))
     MAX_INVEST = float(os.getenv("MAX_INVEST", 10000))
-
-    PROFIT_MARGIN = float(os.getenv("PROFIT_MARGIN", 3))  # percent
-    BOT_COMMISSION_PERCENT = float(os.getenv("BOT_COMMISSION_PERCENT", 20))
-
-settings = Settings()
+    BOT_PROFIT_PERCENTAGE = float(os.getenv("BOT_PROFIT_PERCENTAGE", 3))
