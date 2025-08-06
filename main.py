@@ -4,8 +4,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import config
-from handlers import admin_router, commands_router, deals_router
-
+from handlers.admin import router as admin_router
+from handlers.commands import router as commands_router
+from handlers.deals import router as deals_router
 async def main():
     # إعداد البوت مع تخزين الحالة
     bot = Bot(token=config.BOT_TOKEN, parse_mode=ParseMode.HTML)
