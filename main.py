@@ -1,16 +1,19 @@
 import os
 from aiogram import Bot, Dispatcher
+from aiogram.dispatcher import Dispatcher
 from config import config
 
-try:
-    bot = Bot(token=config.BOT_TOKEN)
-    dp = Dispatcher(bot)
-    
-    async def on_startup():
-        print("✅ تم تهيئة البوت بنجاح!")
-        if not config.TRONGRID_API_KEY:
-            print("⚠️ تحذير: TRONGRID_API_KEY غير معرّف - سيتم تعطيل ميزات TRON")
+async def on_startup():
+    print("✅ البوت يعمل الآن!")
 
-except Exception as e:
-    print(f"❌ خطأ في التهيئة: {str(e)}")
-    raise
+def create_dispatcher():
+    bot = Bot(token=config.BOT_TOKEN)
+    dp = Dispatcher()  # لا تمرر البوت هنا
+    dp.startup.register(on_startup)
+    return dp
+
+dp = create_dispatcher()
+
+if __name__ == "__main__":
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
