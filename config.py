@@ -18,5 +18,10 @@ class Config:
     # إعدادات جديدة لمنع التضارب
     BOT_LOCK_TIMEOUT = int(config("BOT_LOCK_TIMEOUT", default=5))  # ثواني
     MAX_RETRIES = int(config("MAX_RETRIES", default=3))
+    # إعدادات الإدارة
+    ADMINS = config("ADMINS", default="").split(",")  # آيدي الأدمنز مفصولة بفواصل
+    
+    # إعدادات Binance
+    BINANCE_SYMBOLS = config("BINANCE_SYMBOLS", default="BTCUSDT,ETHUSDT").split(",")
 
 config = Config()
