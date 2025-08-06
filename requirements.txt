@@ -1,6 +1,6 @@
 python-telegram-bot==20.3
 python-binance==1.0.19
-openai==1.12.0  # تم تحديد إصدار ثابت
+openai==1.12.0
 psycopg2-binary==2.9.6
 python-dotenv==1.0.0
 celery==5.3.1
