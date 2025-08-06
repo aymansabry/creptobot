@@ -1,6 +1,5 @@
 FROM python:3.10-slim
 
-# تثبيت أدوات البناء الأساسية
 RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
@@ -10,7 +9,6 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . .
 
-# تثبيت المتطلبات مع تحديث pip أولاً
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt --no-cache-dir
 
