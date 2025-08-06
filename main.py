@@ -1,4 +1,3 @@
-import os
 import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -8,10 +7,12 @@ from handlers import commands
 
 bot = Bot(token=config.BOT_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
+
+# تضمين الراوترات
 dp.include_router(commands.router)
 
 async def main():
-    print(f"🚀 Starting bot on port {config.PORT}")
+    print(f"🚀 البوت يعمل على المنفذ {config.PORT}")
     
     if config.DEPLOY_MODE == "webhook":
         from aiogram.webhook.aiohttp_server import setup_application
@@ -30,10 +31,10 @@ async def main():
         site = web.TCPSite(runner, host="0.0.0.0", port=config.PORT)
         await site.start()
         
-        print(f"🌐 Webhook configured at {config.WEBHOOK_URL}")
+        print(f"🌐 Webhook настроен на {config.WEBHOOK_URL}")
         await asyncio.Event().wait()
     else:
-        print("🔄 Starting in polling mode...")
+        print("🔄 بدء التشغيل في وضع Polling...")
         await dp.start_polling(bot)
 
 if __name__ == "__main__":
