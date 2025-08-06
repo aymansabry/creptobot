@@ -8,5 +8,5 @@ class CryptoManager:
     def encrypt(self, data: str) -> str:
         return self.cipher.encrypt(data.encode()).decode()
     
-    def decrypt(self, token: str) -> str:
-        return self.cipher.decrypt(token.encode()).decode()
+    def decrypt(self, encrypted: str) -> str:
+        return self.cipher.decrypt(encrypted.encode()).decode()
