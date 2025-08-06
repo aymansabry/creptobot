@@ -1,4 +1,0 @@
-aiogram==3.0.0b7
-python-decouple==3.8
-aiohttp==3.8.5
-python-binance==1.0.29
