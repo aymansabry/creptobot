@@ -1,3 +1,16 @@
+from config import config
+
+class TronManager:
+    def __init__(self):
+        if not config.TRONGRID_API_KEY:
+            raise ValueError("TRONGRID_API_KEY غير معرّف")
+        
+        self.headers = {
+            "Content-Type": "application/json",
+            "TRON-PRO-API-KEY": config.TRONGRID_API_KEY
+        }
+    
+   
 import requests
 from config import config
 
