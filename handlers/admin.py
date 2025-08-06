@@ -3,8 +3,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import config
 
-# تعريف الراوتر بشكل صحيح
-router = Router(name="admin_router")
+router = Router(name="admin")
 
 @router.message(Command("admin"))
 async def admin_panel(message: types.Message):
@@ -28,5 +27,4 @@ async def admin_panel(message: types.Message):
 async def show_stats(callback: types.CallbackQuery):
     await callback.answer("📊 الإحصائيات:\n\n- عدد المستخدمين: 150\n- الصفقات النشطة: 12")
 
-# تصدير الراوتر بشكل صريح
 __all__ = ['router']
