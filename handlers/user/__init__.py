@@ -1,6 +1,8 @@
-from .dashboard import register_handlers as register_dashboard
-from .system_control import register_handlers as register_system_control
+from .auth import register_handlers as register_auth
+from .trading import register_handlers as register_trading
+from .wallet import register_handlers as register_wallet
 
 def register_handlers(dp):
-    register_dashboard(dp)
-    register_system_control(dp)
+    register_auth(dp)
+    register_trading(dp)
+    register_wallet(dp)
