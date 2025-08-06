@@ -1,20 +1,19 @@
 from aiogram import Router, types, F
-from services.binance_api import get_real_deals
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-router = Router()
+router = Router(name="deals")
 
 @router.message(F.text == "📊 عرض الصفقات")
 async def show_deals(message: types.Message):
-    deals = await get_real_deals()
     builder = InlineKeyboardBuilder()
-    
-    for deal in deals[:3]:  # عرض أفضل 3 صفقات
-        builder.add(types.InlineKeyboardButton(
-            text=f"{deal['symbol']} - ربح {deal['profit']}%",
-            callback_data=f"deal_{deal['id']}"
-        ))
+    builder.add(
+        types.InlineKeyboardButton(text="BTC/USDT - ربح 2.5%", callback_data="deal_1"),
+        types.InlineKeyboardButton(text="ETH/USDT - ربح 1.8%", callback_data="deal_2")
+    )
     
     await message.answer(
         "💎 أفضل الصفقات المتاحة:",
         reply_markup=builder.as_markup()
     )
+
+__all__ = ['router']
