@@ -1,5 +1,5 @@
 import logging
-from telegram.ext import Application
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from core.config import config
 from menus.user.main_menu import show_main_menu
 
