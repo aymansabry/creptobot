@@ -1,10 +1,10 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from urllib.parse import quote_plus
 from config import config
 
-engine = create_async_engine(config.DB_URL)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
+# تعديل رابط PostgreSQL ليتوافق مع Railway
+if "postgresql://" in config.DB_URL:
+    DB_URL = config.DB_URL.replace("postgresql://", "postgresql+asyncpg://")
+else:
+    DB_URL = f"postgresql+asyncpg://{quote_plus(config.DB_URL)}"
+    
+engine = create_async_engine(DB_URL)
