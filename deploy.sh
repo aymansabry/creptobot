@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Install dependencies
+# تنصيب المتطلبات
 pip install -r requirements.txt
 
-# Run migrations
+# تنفيذ الهجرة
 python -m db.migrations.v1_initial
 
-# Start the bot
+# تشغيل البوت
 python main.py
