@@ -11,9 +11,8 @@ class Config:
     
     # Tron
     TRONGRID_API_URL = "https://api.trongrid.io"
+    TRONGRID_API_KEY = config("TRONGRID_API_KEY")  # احصل عليه من trangrid.io
     TRON_USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-    TRON_PRIVATE_KEY = config("TRON_PRIVATE_KEY")
-    ADMIN_WALLET = config("ADMIN_WALLET")
     
     # Security
     ENCRYPTION_KEY = config("ENCRYPTION_KEY")
@@ -21,4 +20,5 @@ class Config:
     # Database
     DB_URL = config("DATABASE_URL")
 
+   
 config = Config()
