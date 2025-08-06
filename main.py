@@ -1,17 +1,18 @@
-import asyncio
-from aiogram import Bot, Dispatcher
-from config import config
-from handlers.buttons import deals, wallet
+import os
+from aiogram.utils.executor import start_webhook
 
-bot = Bot(token=config.BOT_TOKEN)
-dp = Dispatcher(bot)
+WEBHOOK_URL = os.getenv("RAILWAY_STATIC_URL") + "/webhook"
 
-# تسجيل ال handlers
-dp.register_message_handler(wallet.create_wallet, text="💰 إنشاء محفظة")
-dp.register_callback_query_handler(deals.handle_real_deal, text_startswith="deal_")
-
-async def main():
-    await dp.start_polling()
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if config.is_production:
+        start_webhook(
+            dispatcher=dp,
+            webhook_path="/webhook",
+            on_startup=on_startup,
+            host="0.0.0.0",
+            port=int(os.getenv("PORT", 8000))
+    else:
+        asyncio.run(dp.start_polling())
