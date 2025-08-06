@@ -10,6 +10,8 @@ class Config:
     BINANCE_API_URL = config("BINANCE_API_URL", "https://api.binance.com")
     
     # Tron
+    TRONGRID_API_URL = "https://api.trongrid.io"
+    TRON_USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
     TRON_PRIVATE_KEY = config("TRON_PRIVATE_KEY")
     ADMIN_WALLET = config("ADMIN_WALLET")
     
