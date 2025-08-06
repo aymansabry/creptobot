@@ -21,5 +21,7 @@ class Config:
     
     # Admins
     ADMINS = list(map(int, config("ADMINS", default="").split(","))) if config("ADMINS", default="") else []
-
+  @property
+    def is_production(self):
+        return self.DEPLOY_MODE == "webhook" and bool(self.WEBHOOK_URL)
 config = Config()
