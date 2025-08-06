@@ -1,6 +1,6 @@
 aiogram==3.0.0b7
-binance-connector==3.2.0  # بديل عن python-binance
-tronpy==2.2.1
+binance-connector==3.2.0
+tronpy==2.0.0  # تم التعديل هنا
 sqlalchemy[asyncio]==2.0.23
 asyncpg==0.28.0
 alembic==1.12.0
