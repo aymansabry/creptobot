@@ -1,15 +1,16 @@
-from binance import AsyncClient
+from services.binance.client import BinanceClient
+from config import config
 
 class RealArbitrage:
-    def __init__(self, config):
-        self.client = AsyncClient(config.BINANCE_API_KEY, config.BINANCE_API_SECRET)
+    def __init__(self):
+        self.client = BinanceClient()
     
-    async def execute_real_trade(self, deal_id: str) -> float:
-        # تنفيذ صفقة حقيقية على Binance
-        order = await self.client.create_order(
-            symbol="BTCUSDT",
+    async def execute_real_trade(self, symbol: str):
+        price = await self.client.get_price(symbol)
+        # ... منطق الصفقات هنا
+        return await self.client.create_order(
+            symbol=symbol,
             side="BUY",
             type="MARKET",
             quantity=0.001
         )
-        return float(order['cummulativeQuoteQty']) * 0.02  # افتراضي 2% ربح
