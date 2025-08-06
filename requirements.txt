@@ -7,4 +7,4 @@ gunicorn==21.2.0
 uvicorn==0.23.2
 cryptography==41.0.3
 python-decouple==3.8
-requests==2.31.0  # للتعامل مع TronGrid API مباشرة
+requests==2.31.0
