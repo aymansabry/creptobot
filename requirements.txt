@@ -1,6 +1,5 @@
 aiogram==3.0.0b7
 binance-connector==3.2.0
-tronpy==1.6.1
 sqlalchemy[asyncio]==2.0.23
 asyncpg==0.28.0
 alembic==1.12.0
@@ -8,3 +7,4 @@ gunicorn==21.2.0
 uvicorn==0.23.2
 cryptography==41.0.3
 python-decouple==3.8
+requests==2.31.0  # للتعامل مع TronGrid API مباشرة
