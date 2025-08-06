@@ -1,15 +1,16 @@
 import os
-import asyncio
 from aiogram import Bot, Dispatcher
 from config import config
 
-bot = Bot(token=config.BOT_TOKEN)
-dp = Dispatcher(bot)
+try:
+    bot = Bot(token=config.BOT_TOKEN)
+    dp = Dispatcher(bot)
+    
+    async def on_startup():
+        print("✅ تم تهيئة البوت بنجاح!")
+        if not config.TRONGRID_API_KEY:
+            print("⚠️ تحذير: TRONGRID_API_KEY غير معرّف - سيتم تعطيل ميزات TRON")
 
-async def main():
-    port = int(os.environ.get("PORT", 8000))
-    print(f"🚀 البوت يعمل على المنفذ {port}")
-    await dp.start_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+except Exception as e:
+    print(f"❌ خطأ في التهيئة: {str(e)}")
+    raise
