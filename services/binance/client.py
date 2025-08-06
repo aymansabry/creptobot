@@ -9,8 +9,8 @@ class BinanceClient:
             base_url=config.BINANCE_API_URL
         )
     
-    async def get_price(self, symbol: str):
+    def get_price(self, symbol: str):
         return self.client.ticker_price(symbol)
     
-    async def create_order(self, **params):
+    def create_order(self, **params):
         return self.client.new_order(**params)
