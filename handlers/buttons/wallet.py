@@ -1,9 +1,14 @@
 from aiogram import types
-from database.operations import create_user
 from database.models import User
+from database import get_db
 
 async def create_wallet(message: types.Message):
-    # إنشاء محفظة حقيقية هنا (يجب استبدالها بوظيفة TRON الفعلية)
-    dummy_wallet = "T" + "X"*33  # مثال لعنوان محفظة
-    await create_user(message.from_user.id, dummy_wallet)
-    await message.answer(f"🎉 تم إنشاء محفظتك:\n{dummy_wallet}")
+    async with get_db() as session:
+        user = await session.get(User, message.from_user.id)
+        if not user:
+            user = User(id=message.from_user.id, wallet="TXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            session.add(user)
+            await session.commit()
+            await message.answer("🎉 تم إنشاء محفظتك!")
+        else:
+            await message.answer("⚠️ لديك محفظة بالفعل!")
