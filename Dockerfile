@@ -12,4 +12,4 @@ COPY . .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt --no-cache-dir
 
-CMD ["gunicorn", "main:bot", "--bind", "0.0.0.0:$PORT", "--worker-class", "uvicorn.workers.UvicornWorker"]
+CMD ["gunicorn", "--config", "gunicorn_config.py", "main:bot"]
