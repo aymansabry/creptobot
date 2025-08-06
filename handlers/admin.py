@@ -1,13 +1,14 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from config import config
 
-router = Router()
+# تعريف الراوتر بشكل صحيح
+router = Router(name="admin_router")
 
-# لوحة التحكم الإدارية
 @router.message(Command("admin"))
 async def admin_panel(message: types.Message):
-    if str(message.from_user.id) not in config.ADMINS:
+    if message.from_user.id not in config.ADMINS:
         return await message.answer("❌ ليس لديك صلاحية الدخول هنا")
     
     builder = InlineKeyboardBuilder()
@@ -25,5 +26,7 @@ async def admin_panel(message: types.Message):
 
 @router.callback_query(F.data == "admin_stats")
 async def show_stats(callback: types.CallbackQuery):
-    # كود جلب الإحصائيات من قاعدة البيانات
     await callback.answer("📊 الإحصائيات:\n\n- عدد المستخدمين: 150\n- الصفقات النشطة: 12")
+
+# تصدير الراوتر بشكل صريح
+__all__ = ['router']
