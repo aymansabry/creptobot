@@ -1,5 +1,4 @@
 from decouple import config
-from typing import List
 
 class Config:
     # Telegram
@@ -7,7 +6,8 @@ class Config:
     
     # Binance
     BINANCE_API_KEY = config("BINANCE_API_KEY")
-    BINANCE_API_SECRET = config("BINANCE_SECRET")
+    BINANCE_SECRET = config("BINANCE_SECRET")
+    BINANCE_API_URL = config("BINANCE_API_URL", "https://api.binance.com")
     
     # Tron
     TRON_PRIVATE_KEY = config("TRON_PRIVATE_KEY")
@@ -16,8 +16,7 @@ class Config:
     # Security
     ENCRYPTION_KEY = config("ENCRYPTION_KEY")
     
-    # Settings
-    ALLOWED_USER_IDS = [int(i) for i in config("ALLOWED_USER_IDS", "").split(",") if i]
-    MIN_INVESTMENT = float(config("MIN_INVESTMENT", 10.0))
+    # Database
+    DB_URL = config("DATABASE_URL")
 
 config = Config()
