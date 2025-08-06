@@ -1,22 +1,18 @@
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from core.config import config
-from menus.user import main_menu, trading_menu, wallet_menu
-import handlers.user.trading_handlers as trading_handlers
+from menus.user.main import show_main_menu
+from handlers.user.trading import handle_trading
+from handlers.user.wallet import handle_wallet
 
-# ... (بقية الإعدادات)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-def setup_handlers(application):
-    # معالجات الأوامر
-    application.add_handler(CommandHandler("start", main_menu.show_main_menu))
-    
-    # معالجات القوائم
-    application.add_handler(MessageHandler(filters.Text(["💰 استثمار جديد"]), trading_menu.show_new_investment))
-    application.add_handler(MessageHandler(filters.Text(["📊 تحليل السوق"]), trading_handlers.analyze_market))
-    application.add_handler(MessageHandler(filters.Text(["💼 محفظتي"]), wallet_menu.show_wallet))
-    
-    # معالجات أخرى
-    application.add_handler(CallbackQueryHandler(trading_handlers.handle_investment_callback, pattern="^invest_"))
+async def start(update, context):
+    await show_main_menu(update)
 
 def main():
     if not config.TELEGRAM_TOKEN:
@@ -25,9 +21,18 @@ def main():
 
     try:
         application = Application.builder().token(config.TELEGRAM_TOKEN).build()
-        setup_handlers(application)
+        
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+        
+        # معالجات القوائم
+        application.add_handler(MessageHandler(filters.Regex("💰 استثمار جديد"), handle_trading))
+        application.add_handler(MessageHandler(filters.Regex("💼 محفظتي"), handle_wallet))
         
         logger.info("🤖 جاري تشغيل البوت...")
         application.run_polling()
     except Exception as e:
         logger.error(f"❌ خطأ في تشغيل البوت: {str(e)}")
+
+if __name__ == '__main__':
+    main()
