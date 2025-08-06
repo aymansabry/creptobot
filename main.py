@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import config
-from handlers.admin import router as admin_router  # تغيير هنا
+from handlers.admin import router as admin_router
 from handlers.commands import router as commands_router
 from handlers.deals import router as deals_router
 
