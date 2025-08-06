@@ -7,3 +7,5 @@ routers = [
     admin_router,
     deals_router
 ]
+
+__all__ = ['routers']
