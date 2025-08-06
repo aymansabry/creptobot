@@ -1,18 +1,19 @@
-import os
-from aiogram.utils.executor import start_webhook
+import asyncio
+from aiogram import Bot, Dispatcher
+from config import config
+from handlers.buttons import deals, wallet
 
-WEBHOOK_URL = os.getenv("RAILWAY_STATIC_URL") + "/webhook"
+bot = Bot(token=config.BOT_TOKEN)
+dp = Dispatcher(bot)
 
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
+# تسجيل handlers
+dp.register_message_handler(wallet.create_wallet, text="💰 إنشاء محفظة")
+dp.register_callback_query_handler(deals.handle_real_deal, text_startswith="deal_")
+
+async def main():
+    if config.BINANCE_API_URL == "https://testnet.binance.vision":
+        print("⚠️ يعمل البوت في وضع الاختبار")
+    await dp.start_polling()
 
 if __name__ == "__main__":
-    if config.is_production:
-        start_webhook(
-            dispatcher=dp,
-            webhook_path="/webhook",
-            on_startup=on_startup,
-            host="0.0.0.0",
-            port=int(os.getenv("PORT", 8000))
-    else:
-        asyncio.run(dp.start_polling())
+    asyncio.run(main())
