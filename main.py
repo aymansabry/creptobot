@@ -1,26 +1,34 @@
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-from menus.user.main_menu import show_main_menu
 import logging
+from telegram.ext import Application
+from core.config import config
+from menus.user.main_menu import show_main_menu
 
-# Configure logging
+# تكوين السجل
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
-def start(update, context):
-    show_main_menu(update)
+async def start(update, context):
+    await show_main_menu(update)
 
 def main():
-    updater = Updater(token=os.getenv('TELEGRAM_TOKEN'), use_context=True)
-    dp = updater.dispatcher
-    
-    # Handlers
-    dp.add_handler(CommandHandler('start', start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, start))
-    
-    updater.start_polling()
-    updater.idle()
+    if not config.TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN غير مضبوط!")
+        return
+
+    try:
+        application = Application.builder().token(config.TELEGRAM_TOKEN).build()
+        
+        # معالجات الأوامر
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+        
+        logger.info("🤖 جاري تشغيل البوت...")
+        application.run_polling()
+    except Exception as e:
+        logger.error(f"❌ خطأ في تشغيل البوت: {str(e)}")
 
 if __name__ == '__main__':
     main()
