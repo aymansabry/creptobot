@@ -1,17 +1,22 @@
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from core.config import config
-from menus.user.main_menu import show_main_menu
+from menus.user import main_menu, trading_menu, wallet_menu
+import handlers.user.trading_handlers as trading_handlers
 
-# تكوين السجل
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# ... (بقية الإعدادات)
 
-async def start(update, context):
-    await show_main_menu(update)
+def setup_handlers(application):
+    # معالجات الأوامر
+    application.add_handler(CommandHandler("start", main_menu.show_main_menu))
+    
+    # معالجات القوائم
+    application.add_handler(MessageHandler(filters.Text(["💰 استثمار جديد"]), trading_menu.show_new_investment))
+    application.add_handler(MessageHandler(filters.Text(["📊 تحليل السوق"]), trading_handlers.analyze_market))
+    application.add_handler(MessageHandler(filters.Text(["💼 محفظتي"]), wallet_menu.show_wallet))
+    
+    # معالجات أخرى
+    application.add_handler(CallbackQueryHandler(trading_handlers.handle_investment_callback, pattern="^invest_"))
 
 def main():
     if not config.TELEGRAM_TOKEN:
@@ -20,15 +25,9 @@ def main():
 
     try:
         application = Application.builder().token(config.TELEGRAM_TOKEN).build()
-        
-        # معالجات الأوامر
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+        setup_handlers(application)
         
         logger.info("🤖 جاري تشغيل البوت...")
         application.run_polling()
     except Exception as e:
         logger.error(f"❌ خطأ في تشغيل البوت: {str(e)}")
-
-if __name__ == '__main__':
-    main()
