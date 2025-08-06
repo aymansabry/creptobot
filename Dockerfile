@@ -2,12 +2,13 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# تثبيت التبعيات
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc python3-dev
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# نسخ الملفات
 COPY . .
 
-# تشغيل البوت
 CMD ["python", "main.py"]
