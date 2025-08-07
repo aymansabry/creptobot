@@ -1,22 +1,78 @@
 import asyncio
-from utils.logger import setup_logging
+import logging
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    CallbackContext,
+    ConversationHandler
+)
+from core.config import config
+from core.virtual_wallet import virtual_wallet
 from core.trading_engine import TradingEngine
+from utils.logger import setup_logging
+from handlers.deposit import (
+    start_deposit,
+    receive_deposit_amount,
+    verify_transaction,
+    cancel_deposit,
+    DEPOSIT_AMOUNT,
+    DEPOSIT_CONFIRM
+)
+from handlers.trading import start_trading, execute_trade
+from handlers.wallet import show_balance
 
-async def main():
-    setup_logging()
-    engine = TradingEngine()
+# Initialize components
+setup_logging()
+engine = TradingEngine()
+
+async def start(update: Update, context: CallbackContext):
+    """Start command handler"""
+    user_id = str(update.effective_user.id)
+    virtual_wallet.create_wallet(user_id)
     
-    # مثال لتنفيذ صفقة مع التحقق من الرصيد
-    trading_pairs = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT']
-    trade_amount = 10  # USDT
+    await update.message.reply_text(
+        "🚀 مرحباً بكم في نظام التداول الآلي\n\n"
+        f"رصيدك الحالي: {virtual_wallet.get_balance(user_id):.2f} USDT\n\n"
+        "استخدم الأوامر التالية:\n"
+        "/deposit - لإيداع الأموال\n"
+        "/trade - لبدء التداول\n"
+        "/balance - لعرض رصيدك"
+    )
+
+async def error_handler(update: Update, context: CallbackContext):
+    """Log errors"""
+    logging.error(f"Update {update} caused error: {context.error}")
+
+def main():
+    """Start the bot"""
+    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+
+    # Add conversation handler for deposits
+    deposit_conv = ConversationHandler(
+        entry_points=[CommandHandler('deposit', start_deposit)],
+        states={
+            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deposit_amount)],
+            DEPOSIT_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, verify_transaction)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel_deposit)]
+    )
+
+    # Register handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(deposit_conv)
+    app.add_handler(CommandHandler("trade", start_trading))
+    app.add_handler(CommandHandler("balance", show_balance))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, execute_trade))
     
-    for pair in trading_pairs:
-        result = await engine.execute_trade(pair, trade_amount)
-        
-        if result['status'] == 'completed':
-            print(f"Trade successful! Profit: {result['profit']:.2f} USDT")
-        else:
-            print(f"Trade failed: {result['error']}")
+    # Error handler
+    app.add_error_handler(error_handler)
+
+    # Start the bot
+    app.run_polling()
 
 if __name__ == "__main__":
+    # Start background tasks
     asyncio.run(main())
