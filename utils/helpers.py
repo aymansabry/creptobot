@@ -12,13 +12,12 @@ def calculate_profit(buy_price: float, sell_price: float, amount: float) -> floa
     return (sell_price - buy_price) * amount
 
 def validate_wallet_address(address: str) -> bool:
-    # تنفيذ بسيط للتحقق من عنوان المحفظة
     return len(address) >= 25 and len(address) <= 64
 
 def prepare_trade_data(user_id: int, symbol: str, buy_exchange: str, sell_exchange: str,
                      amount: float, buy_price: float, sell_price: float) -> Dict[str, Any]:
     profit = calculate_profit(buy_price, sell_price, amount)
-    commission = profit * 0.1  # عمولة 10%
+    commission = profit * 0.1
     net_profit = profit - commission
     
     return {
