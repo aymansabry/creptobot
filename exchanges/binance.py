@@ -1,6 +1,6 @@
+from utils.logger import exchange_logger, log_error
 from binance.client import Client
 from core.config import config
-from utils.logger import exchange_logger
 
 class BinanceAPI:
     def __init__(self):
@@ -8,30 +8,22 @@ class BinanceAPI:
             api_key=config.BINANCE_API_KEY,
             api_secret=config.BINANCE_API_SECRET
         )
-    
-    async def execute_arbitrage(self, trade_data: dict):
+        self.logger = exchange_logger
+
+    async def execute_order(self, symbol, side, quantity):
         try:
-            # تنفيذ صفقة الشراء
-            buy_order = self.client.create_order(
-                symbol=trade_data['buy_pair'],
-                side='BUY',
+            self.logger.info(f"Executing {side} order for {quantity} {symbol}")
+            
+            order = self.client.create_order(
+                symbol=symbol,
+                side=side,
                 type='MARKET',
-                quantity=trade_data['amount']
+                quantity=quantity
             )
             
-            # تنفيذ صفقة البيع
-            sell_order = self.client.create_order(
-                symbol=trade_data['sell_pair'],
-                side='SELL',
-                type='MARKET',
-                quantity=trade_data['amount']
-            )
+            self.logger.info(f"Order executed: {order}")
+            return order
             
-            return {
-                'status': 'completed',
-                'buy_order': buy_order,
-                'sell_order': sell_order
-            }
         except Exception as e:
-            exchange_logger.error(f"Binance error: {str(e)}")
-            return {'status': 'failed', 'error': str(e)}
+            log_error(f"Binance API Error: {str(e)}", exc_info=True)
+            raise
