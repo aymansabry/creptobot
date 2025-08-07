@@ -76,3 +76,16 @@ async def get_system_settings(session: AsyncSession) -> SystemSettings:
         session.add(settings)
         await session.commit()
     return settings
+
+async def update_system_settings(session: AsyncSession, updates: Dict[str, Any], updated_by: int = None) -> SystemSettings:
+    settings = await get_system_settings(session)
+    
+    for key, value in updates.items():
+        if hasattr(settings, key):
+            setattr(settings, key, value)
+    
+    if updated_by:
+        settings.updated_by = updated_by
+    
+    await session.commit()
+    return settings
