@@ -1,19 +1,29 @@
 from exchanges.binance import BinanceAPI
-from ai.arbitrage import ArbitrageFinder
-from db.crud import record_trade
-from utils.logger import trade_logger
+from utils.logger import trade_logger, log_error
 
 class TradingEngine:
     def __init__(self):
-        self.binance = BinanceAPI()
-        self.arbitrage_finder = ArbitrageFinder()
-    
-    async def execute_auto_trade(self):
-        opportunities = self.arbitrage_finder.find_opportunities()
-        best_trade = self.arbitrage_finder.select_best_trade(opportunities)
-        
-        if best_trade:
-            execution_result = await self.binance.execute_arbitrage(best_trade)
-            record_trade(execution_result)
-            return execution_result
-        return None
+        self.api = BinanceAPI()
+        trade_logger.info("Trading engine initialized")
+
+    async def execute_trade(self, pair, amount):
+        try:
+            trade_logger.info(f"Starting trade for {pair} with {amount} USDT")
+            
+            # تنفيذ الصفقة
+            buy_order = await self.api.execute_order(pair, 'BUY', amount)
+            sell_order = await self.api.execute_order(pair, 'SELL', amount)
+            
+            trade_logger.info(f"Trade completed successfully")
+            return {
+                'status': 'completed',
+                'buy_order': buy_order,
+                'sell_order': sell_order
+            }
+            
+        except Exception as e:
+            log_error(f"Trade failed: {str(e)}")
+            return {
+                'status': 'failed',
+                'error': str(e)
+            }
