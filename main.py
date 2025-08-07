@@ -10,18 +10,12 @@ from telegram.ext import (
 )
 
 # تهيئة النظام
-from utils.logger import Logger
-logger = Logger()
+from utils.logger import setup_logging
+setup_logging()
 
 from core.config import config
-from core.virtual_wallet import get_virtual_wallet
-
-# بدلاً من: from core.virtual_wallet import virtual_wallet
-virtual_wallet = get_virtual_wallet()
-from core.trading_engine import TradingEngine
-
-# استيراد ال handlers
 from handlers import (
+    start,
     deposit,
     trading,
     wallet
@@ -43,6 +37,7 @@ def setup_handlers(app):
     app.add_handler(deposit_conv)
     app.add_handler(CommandHandler("trade", trading.start_trading))
     app.add_handler(CommandHandler("balance", wallet.show_balance))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, trading.execute_trade))
 
 def main():
     """بدء تشغيل البوت"""
@@ -50,10 +45,9 @@ def main():
         app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
         setup_handlers(app)
         
-        logger.user.info("Starting bot application")
         app.run_polling()
     except Exception as e:
-        log_error(f"Bot startup failed: {str(e)}", 'system')
+        print(f"Failed to start bot: {str(e)}")
         raise
 
 if __name__ == "__main__":
