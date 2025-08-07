@@ -1,4 +1,4 @@
-#main.py
+# main.py
 import asyncio
 import logging
 from telegram.ext import Application
@@ -74,10 +74,14 @@ async def main():
             kucoin_api=kucoin_api
         )
         
-        # إنشاء تطبيق التليجرام
+        # إنشاء تطبيق التليجرام مع إعدادات خاصة لمنع التعارض
         application = Application.builder() \
             .token(config.get('telegram.bot_token')) \
             .concurrent_updates(True) \
+            .read_timeout(30) \
+            .write_timeout(30) \
+            .pool_timeout(30) \
+            .get_updates_read_timeout(30) \
             .build()
         
         # مشاركة البيانات بين المعالجات
@@ -96,19 +100,33 @@ async def main():
         setup_trade_handlers(application)
         setup_admin_handlers(application)
         
-        # بدء البوت
+        # بدء البوت مع التحكم في عملية polling
         logger.info("Starting the bot...")
         await application.initialize()
-        await application.bot.delete_webhook()  # حذف أي Webhooks قديمة
+        
+        # حذف أي Webhooks قديمة والتأكد من عدم وجود نسخ متعددة
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        
+        # بدء استقبال التحديثات
         await application.start()
-        await application.updater.start_polling()
+        
+        # استخدام Updater بدلاً من start_polling للتحكم الكامل
+        updater = application.updater
+        if updater:
+            await updater.start_polling(
+                bootstrap_retries=-1,
+                timeout=30,
+                read_timeout=30,
+                connect_timeout=30,
+                pool_timeout=30
+            )
         
         # البقاء في حلقة التشغيل
         while True:
             await asyncio.sleep(3600)
             
     except Exception as e:
-        logger.exception("Fatal error in main:")
+        logger.exception(f"Fatal error in main: {str(e)}")
     finally:
         if 'application' in locals():
             await application.stop()
@@ -116,4 +134,8 @@ async def main():
         logger.info("Bot has been stopped")
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    # تشغيل البوت مع ضمان عدم وجود نسخ متعددة
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
