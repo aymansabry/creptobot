@@ -1,1 +1,1 @@
-web: python -m pip install --upgrade pip setuptools wheel && python -m pip install -r requirements.txt && python main.py
+web: python -m pip install --upgrade pip && pip install -r requirements.txt && python main.py
