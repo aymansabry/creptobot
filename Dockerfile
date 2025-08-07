@@ -1,18 +1,13 @@
 # استخدم صورة بايثون الرسمية
 FROM python:3.11-slim
 
-# تثبيت الحزم الأساسية المطلوبة للبناء
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    build-essential \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+# تثبيت أدوات النظام المطلوبة لبناء psycopg2
+RUN apt-get update && apt-get install -y     gcc     libpq-dev     build-essential     && rm -rf /var/lib/apt/lists/*
 
-# تعيين مجلد العمل داخل الحاوية
+# إعداد مجلد العمل داخل الحاوية
 WORKDIR /app
 
-# نسخ ملفات المشروع إلى داخل الحاوية
+# نسخ الملفات إلى الحاوية
 COPY . .
 
 # تثبيت المتطلبات
