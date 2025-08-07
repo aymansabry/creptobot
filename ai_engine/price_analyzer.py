@@ -1,20 +1,20 @@
 import ccxt
 import numpy as np
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime
 
 class PriceAnalyzer:
     def __init__(self, exchanges: List[str]):
         self.exchanges = {name: getattr(ccxt, name)() for name in exchanges}
         
-    async def fetch_prices(self, symbols: List[str]) -> Dict:
+    async def fetch_prices(self, symbols: List[str]) -> Dict[str, Dict[str, Dict]]:
         prices = {}
         for exchange_name, exchange in self.exchanges.items():
             try:
                 prices[exchange_name] = {}
                 for symbol in symbols:
-                    ticker = exchange.fetch_ticker(symbol)
+                    ticker = await exchange.fetch_ticker(symbol)
                     prices[exchange_name][symbol] = {
                         'bid': ticker['bid'],
                         'ask': ticker['ask'],
@@ -25,9 +25,16 @@ class PriceAnalyzer:
                 print(f"Error fetching prices from {exchange_name}: {str(e)}")
         return prices
     
-    def find_arbitrage_opportunities(self, prices: Dict, min_profit: float = 0.015) -> List[Dict]:
+    def find_arbitrage_opportunities(self, prices: Dict[str, Dict[str, Dict]], min_profit: float = 0.015) -> List[Dict]:
         opportunities = []
-        symbols = list(next(iter(prices.values())).keys()
+        
+        # التحقق من وجود بيانات أسعار
+        if not prices or not any(prices.values()):
+            return opportunities
+            
+        # الحصول على جميع الرموز المتاحة
+        first_exchange = next(iter(prices.values()))
+        symbols = list(first_exchange.keys()) if first_exchange else []
         
         for symbol in symbols:
             buy_exchange = None
@@ -37,8 +44,8 @@ class PriceAnalyzer:
             
             for exchange_name, exchange_prices in prices.items():
                 if symbol in exchange_prices:
-                    bid = exchange_prices[symbol]['bid']
-                    ask = exchange_prices[symbol]['ask']
+                    bid = exchange_prices[symbol]['bid'] or 0
+                    ask = exchange_prices[symbol]['ask'] or float('inf')
                     
                     if bid > max_bid:
                         max_bid = bid
@@ -50,7 +57,7 @@ class PriceAnalyzer:
             
             if buy_exchange and sell_exchange and buy_exchange != sell_exchange:
                 spread = max_bid - min_ask
-                profit_percentage = spread / min_ask
+                profit_percentage = spread / min_ask if min_ask > 0 else 0
                 
                 if profit_percentage >= min_profit:
                     opportunities.append({
