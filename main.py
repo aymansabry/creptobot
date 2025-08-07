@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from telegram.ext import Application
 from utils.config_loader import ConfigLoader
 from utils.logger import logger
@@ -13,12 +14,19 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 import redis
 
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 async def main():
-    # تحميل الإعدادات
-    config = ConfigLoader()
-    
     try:
-        # إعداد اتصال قاعدة البيانات
+        # Load configuration
+        config = ConfigLoader()
+        
+        # Database setup
         engine = create_async_engine(
             config.get('database.url'),
             echo=False,
@@ -27,21 +35,21 @@ async def main():
             pool_pre_ping=True
         )
         
-        # إنشاء الجداول إذا لم تكن موجودة
+        # Create tables if they don't exist
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         
-        # إعداد جلسة قاعدة البيانات
+        # Session factory
         AsyncSessionLocal = sessionmaker(
             bind=engine,
             expire_on_commit=False,
             class_=AsyncSession
         )
         
-        # إعداد Redis
+        # Redis setup
         redis_client = redis.from_url(config.get('redis.url'))
         
-        # إعداد واجهات APIs للمنصات
+        # Exchange APIs setup
         binance_api = ExchangeAPI(
             api_key=config.get('binance.api_key'),
             api_secret=config.get('binance.api_secret'),
@@ -54,16 +62,18 @@ async def main():
             exchange_name='kucoin'
         )
         
-        # إعداد محرك الذكاء الاصطناعي
+        # AI Engine setup
         decision_maker = DecisionMaker(exchanges=['binance', 'kucoin'])
         
-        # إعداد منفذ الصفقات
+        # Trade executor setup
         trade_executor = TradeExecutor(binance_api=binance_api, kucoin_api=kucoin_api)
         
-        # إعداد تطبيق التليجرام
-        application = Application.builder().token(config.get('telegram.bot_token')).build()
+        # Telegram application setup
+        application = Application.builder() \
+            .token(config.get('telegram.bot_token')) \
+            .build()
         
-        # إضافة البيانات المشتركة
+        # Share data between handlers
         application.bot_data.update({
             'db_session': AsyncSessionLocal,
             'redis_client': redis_client,
@@ -75,28 +85,28 @@ async def main():
             'owner_tron_address': config.get('trading.owner_tron_address')
         })
         
-        # إعداد معالجات الأوامر
+        # Setup handlers
         setup_user_handlers(application)
         setup_trade_handlers(application)
         setup_admin_handlers(application)
         
-        # بدء البوت
-        logger.info("Starting the bot...")
+        # Start the bot
+        logger.info("Starting bot...")
         await application.initialize()
         await application.start()
         await application.updater.start_polling()
         
-        # تشغيل البوت حتى يتم إيقافه
+        # Keep running
         while True:
             await asyncio.sleep(3600)
             
     except Exception as e:
-        logger.exception("An error occurred in main:")
+        logger.exception("Fatal error in main:")
     finally:
         if 'application' in locals():
             await application.stop()
             await application.shutdown()
-        logger.info("Bot has been stopped")
+        logger.info("Bot stopped")
 
 if __name__ == '__main__':
     asyncio.run(main())
