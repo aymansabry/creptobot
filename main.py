@@ -1,5 +1,5 @@
 import asyncio
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application
 from utils.config_loader import ConfigLoader
 from utils.logger import logger
 from handlers.user_handlers import setup_user_handlers
@@ -7,7 +7,6 @@ from handlers.trade_handlers import setup_trade_handlers
 from handlers.admin_handlers import setup_admin_handlers
 from ai_engine.decision_maker import DecisionMaker
 from core.exchange_api import ExchangeAPI
-from core.wallet_manager import WalletManager
 from core.trade_executor import TradeExecutor
 from db.models import Base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -19,12 +18,25 @@ async def main():
     config = ConfigLoader()
     
     try:
-        # إعداد قاعدة البيانات
-        engine = create_async_engine(config.get('database.url'))
+        # إعداد اتصال قاعدة البيانات
+        engine = create_async_engine(
+            config.get('database.url'),
+            echo=False,
+            pool_size=20,
+            max_overflow=10,
+            pool_pre_ping=True
+        )
+        
+        # إنشاء الجداول إذا لم تكن موجودة
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         
-        AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        # إعداد جلسة قاعدة البيانات
+        AsyncSessionLocal = sessionmaker(
+            bind=engine,
+            expire_on_commit=False,
+            class_=AsyncSession
+        )
         
         # إعداد Redis
         redis_client = redis.from_url(config.get('redis.url'))
@@ -57,7 +69,7 @@ async def main():
             'redis_client': redis_client,
             'decision_maker': decision_maker,
             'trade_executor': trade_executor,
-            'exchange_api': binance_api,  # نستخدم Binance كافتراضي للسحب والإيداع
+            'exchange_api': binance_api,
             'admin_ids': config.get('telegram.admin_ids'),
             'main_wallet_address': config.get('trading.main_wallet_address'),
             'owner_tron_address': config.get('trading.owner_tron_address')
