@@ -1,18 +1,14 @@
 import asyncio
+from utils.logger import setup_logging
 from core.trading_engine import TradingEngine
-from wallet.manager import WalletManager
-from monitoring.performance import PerformanceMonitor
 
 async def main():
-    trader = TradingEngine()
-    wallet = WalletManager()
-    monitor = PerformanceMonitor()
+    setup_logging()
+    engine = TradingEngine()
     
-    while True:
-        await trader.execute_auto_trade()
-        await wallet.rebalance_portfolio()
-        report = monitor.generate_daily_report()
-        await asyncio.sleep(60)
+    # مثال لتنفيذ صفقة
+    result = await engine.execute_trade('BTCUSDT', 0.001)
+    print(result)
 
 if __name__ == "__main__":
     asyncio.run(main())
