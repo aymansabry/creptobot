@@ -46,8 +46,16 @@ async def main():
             class_=AsyncSession
         )
         
-        # إعداد Redis
-        redis_client = redis.from_url(config.get('redis.url'))
+        # إعداد Redis (مع التعامل مع حالة عدم الاتصال)
+        redis_client = None
+        if not config.get('redis.disabled', False):
+            try:
+                redis_client = redis.from_url(config.get('redis.url'))
+                redis_client.ping()
+                logger.info("Redis connection established")
+            except Exception as e:
+                logger.warning(f"Failed to connect to Redis: {str(e)}")
+                redis_client = None
         
         # إعداد واجهات APIs
         binance_api = ExchangeAPI(
@@ -74,7 +82,7 @@ async def main():
             kucoin_api=kucoin_api
         )
         
-        # إنشاء تطبيق التليجرام مع إعدادات خاصة لمنع التعارض
+        # إنشاء تطبيق التليجرام
         application = Application.builder() \
             .token(config.get('telegram.bot_token')) \
             .concurrent_updates(True) \
@@ -87,7 +95,7 @@ async def main():
         # مشاركة البيانات بين المعالجات
         application.bot_data.update({
             'db_session': AsyncSessionLocal,
-            'redis_client': redis_client,
+            'redis_client': redis_client,  # قد يكون None
             'decision_maker': decision_maker,
             'trade_executor': trade_executor,
             'admin_ids': config.get('telegram.admin_ids'),
@@ -100,17 +108,13 @@ async def main():
         setup_trade_handlers(application)
         setup_admin_handlers(application)
         
-        # بدء البوت مع التحكم في عملية polling
+        # بدء البوت
         logger.info("Starting the bot...")
         await application.initialize()
-        
-        # حذف أي Webhooks قديمة والتأكد من عدم وجود نسخ متعددة
         await application.bot.delete_webhook(drop_pending_updates=True)
-        
-        # بدء استقبال التحديثات
         await application.start()
         
-        # استخدام Updater بدلاً من start_polling للتحكم الكامل
+        # بدء استقبال التحديثات
         updater = application.updater
         if updater:
             await updater.start_polling(
@@ -134,7 +138,6 @@ async def main():
         logger.info("Bot has been stopped")
 
 if __name__ == '__main__':
-    # تشغيل البوت مع ضمان عدم وجود نسخ متعددة
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
