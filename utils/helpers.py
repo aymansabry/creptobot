@@ -1,7 +1,5 @@
-from datetime import timedelta
-
-def calculate_fees(amount: float, rate: float) -> float:
-    return amount * rate
-
-def format_duration(seconds: int) -> str:
-    return str(timedelta(seconds=seconds))
+def generate_deposit_address():
+    """إنشاء عنوان إيداع فريد لكل مستخدم"""
+    from hashlib import sha256
+    from datetime import datetime
+    return sha256(f"{datetime.now().timestamp()}".encode()).hexdigest()[:20]
