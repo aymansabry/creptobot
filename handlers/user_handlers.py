@@ -1,5 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from typing import Dict, Any
 from db.crud import get_user, create_user, get_user_wallet, create_wallet
 from db.models import User
 from utils.logger import logger
@@ -9,25 +10,23 @@ from menus.main_menu import show_main_menu
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
-        db_user = await get_user(context.db_session, user.id)
+        db_user = await get_user(context.bot_data['db_session'], user.id)
         
         if not db_user:
-            # إنشاء مستخدم جديد
             new_user = {
                 'telegram_id': user.id,
                 'username': user.username,
                 'first_name': user.first_name,
                 'last_name': user.last_name
             }
-            db_user = await create_user(context.db_session, new_user)
+            db_user = await create_user(context.bot_data['db_session'], new_user)
             
-            # إنشاء محفظة افتراضية
             wallet_data = {
                 'user_id': db_user.id,
                 'address': f"user_{user.id}_wallet",
                 'balances': {'USDT': 0.0}
             }
-            await create_wallet(context.db_session, wallet_data)
+            await create_wallet(context.bot_data['db_session'], wallet_data)
             
             await update.message.reply_text(
                 "🎉 مرحباً بك في نظام التداول الآلي بالمراجحة!\n"
@@ -35,7 +34,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💰 يرجى إيداع الأموال لبدء التداول."
             )
             
-            # إرسال إشعار للمدير
             await send_notification(
                 context.bot_data['admin_ids'][0],
                 f"👤 مستخدم جديد انضم إلى النظام\n"
@@ -58,7 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
-        wallet = await get_user_wallet(context.db_session, user.id)
+        wallet = await get_user_wallet(context.bot_data['db_session'], user.id)
         
         if not wallet:
             await update.message.reply_text("❌ لم يتم العثور على محفظتك. يرجى الاتصال بالدعم.")
@@ -80,7 +78,7 @@ async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
-        wallet = await get_user_wallet(context.db_session, user.id)
+        wallet = await get_user_wallet(context.bot_data['db_session'], user.id)
         
         if not wallet:
             await update.message.reply_text("❌ لم يتم العثور على محفظتك. يرجى الاتصال بالدعم.")
@@ -110,7 +108,7 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         address = args[1]
         
         user = update.effective_user
-        wallet = await get_user_wallet(context.db_session, user.id)
+        wallet = await get_user_wallet(context.bot_data['db_session'], user.id)
         
         if not wallet:
             await update.message.reply_text("❌ لم يتم العثور على محفظتك. يرجى الاتصال بالدعم.")
@@ -120,16 +118,14 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ رصيدك غير كافي لهذا السحب.")
             return
         
-        # تنفيذ السحب
-        await context.application.bot_data['exchange_api'].withdraw(
+        await context.bot_data['exchange_api'].withdraw(
             currency='USDT',
             amount=amount,
             address=address
         )
         
-        # تحديث الرصيد
         wallet.balances['USDT'] -= amount
-        await context.db_session.commit()
+        await context.bot_data['db_session'].commit()
         
         await update.message.reply_text(
             f"✅ تم تنفيذ طلب السحب بنجاح\n\n"
