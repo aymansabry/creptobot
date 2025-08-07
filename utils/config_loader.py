@@ -3,6 +3,9 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, Any
 import redis
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ConfigLoader:
     def __init__(self):
@@ -35,18 +38,19 @@ class ConfigLoader:
             }
         }
         
-        # فحص وجود نسخة أخرى تعمل
-        self._check_duplicate_instance()
+        # فحص اتصال Redis مع معالجة الأخطاء
+        self._check_redis_connection()
 
-    def _check_duplicate_instance(self):
-        """فحص وجود نسخة أخرى من البوت تعمل"""
-        redis_client = redis.from_url(self.get('redis.url'))
-        lock_key = f"bot_lock:{self.get('telegram.bot_token')}"
-        
-        # محاولة الحصول على قفل لمدة 60 ثانية
-        acquired = redis_client.set(lock_key, "1", nx=True, ex=60)
-        if not acquired:
-            raise RuntimeError("Another instance of the bot is already running")
+    def _check_redis_connection(self):
+        """فحص اتصال Redis مع تجاوز الخطأ إذا فشل الاتصال"""
+        try:
+            redis_client = redis.from_url(self.get('redis.url'))
+            redis_client.ping()
+            logger.info("Successfully connected to Redis")
+        except Exception as e:
+            logger.warning(f"Could not connect to Redis: {str(e)}")
+            # تعطيل ميزة التحقق من النسخ المكررة إذا فشل الاتصال
+            self.config['redis']['disabled'] = True
 
     def get(self, key: str, default: Any = None) -> Any:
         keys = key.split('.')
