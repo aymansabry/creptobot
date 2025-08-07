@@ -1,6 +1,6 @@
 python-binance==1.0.19
 kucoin-python==1.0.8
-pybit==1.6.0
+pybit==2.4.1  # تم التحديث إلى أحدث إصدار مستقر
 sqlalchemy==1.4.36
 python-dotenv==0.19.2
 numpy==1.21.0
