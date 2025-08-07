@@ -20,4 +20,6 @@ class Config:
     # AI Settings
     AI_CONFIDENCE_THRESHOLD = float(os.getenv('AI_CONFIDENCE_THRESHOLD', 0.85))
 
+ BINANCE_DEPOSIT_ADDRESS = "TBinanceDepositAddress"  # عنوان إيداع Binance الفعلي
+    MIN_DEPOSIT = 1.0  # الحد الأدنى للإيداع
 config = Config()
