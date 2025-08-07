@@ -21,13 +21,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main():
+    application = None
     try:
         # تحميل الإعدادات
         config = ConfigLoader()
 
         # إعداد قاعدة البيانات
+        db_url = config.get('database.url')
+        if not db_url:
+            raise ValueError("❌ لم يتم العثور على رابط قاعدة البيانات في الإعدادات.")
         engine = create_async_engine(
-            config.get('database.url'),
+            db_url,
             echo=False,
             pool_size=20,
             max_overflow=10,
@@ -38,36 +42,40 @@ async def main():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        # إعداد جلسة قاعدة البيانات
+        # جلسة قاعدة البيانات
         AsyncSessionLocal = sessionmaker(
             bind=engine,
             expire_on_commit=False,
             class_=AsyncSession
         )
 
-        # إعداد Redis
-        redis_client = redis.from_url(config.get('redis.url'))
+        # Redis
+        redis_url = config.get('redis.url')
+        redis_client = redis.from_url(redis_url)
 
-        # إعداد واجهات APIs
+        # إعداد واجهة Binance
         binance_api = ExchangeAPI(
             api_key=config.get('binance.api_key'),
             api_secret=config.get('binance.api_secret'),
             exchange_name='binance'
         )
 
-        # إعداد محرك القرارات
+        # محرك القرارات
         decision_maker = DecisionMaker(exchanges=['binance'])
 
-        # إعداد منفذ الصفقات
-        trade_executor = TradeExecutor(binance_api=binance_api, main_wallet=config.get('trading.main_wallet_address'))
+        # منفذ التداول
+        trade_executor = TradeExecutor(binance_api=binance_api)
 
-        # إنشاء تطبيق التليجرام
+        # بوت تليجرام
+        bot_token = config.get('telegram.bot_token')
+        if not bot_token:
+            raise ValueError("❌ لم يتم العثور على توكن بوت التليجرام.")
         application = Application.builder() \
-            .token(config.get('telegram.bot_token')) \
+            .token(bot_token) \
             .concurrent_updates(True) \
             .build()
 
-        # مشاركة البيانات بين المعالجات
+        # مشاركة البيانات
         application.bot_data.update({
             'db_session': AsyncSessionLocal,
             'redis_client': redis_client,
@@ -82,20 +90,27 @@ async def main():
         setup_trade_handlers(application)
         setup_admin_handlers(application)
 
-        # بدء البوت
-        logger.info("Starting the bot...")
-
+        # بدء التشغيل
+        logger.info("🚀 Starting the bot...")
         await application.initialize()
         await application.bot.delete_webhook()
-        await application.run_polling()
+        await application.start()
+        await application.updater.start_polling()
+
+        # البقاء في التشغيل
+        while True:
+            await asyncio.sleep(3600)
 
     except Exception as e:
-        logger.exception("Fatal error in main:")
+        logger.exception("❌ Fatal error in main:")
     finally:
-        if 'application' in locals():
-            await application.stop()
-            await application.shutdown()
-        logger.info("Bot has been stopped")
+        if application:
+            try:
+                await application.stop()
+                await application.shutdown()
+            except RuntimeError as e:
+                logger.warning(f"⚠️ Shutdown issue: {e}")
+        logger.info("✅ Bot has been stopped.")
 
 if __name__ == '__main__':
     asyncio.run(main())
