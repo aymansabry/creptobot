@@ -29,7 +29,7 @@ async def show_opportunities(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
     except Exception as e:
         logger.error(f"Error in show_opportunities: {str(e)}")
-        await update.callback_query.edit_message_text("⚠️ حدث خطأ أثناء جلب الفرص")
+        await update.callback_query.edit_message_text("⚠️ حدث خطأ أثناء جلب الفرص"))
 
 async def handle_trade_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
