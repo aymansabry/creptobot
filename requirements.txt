@@ -6,4 +6,4 @@ psycopg2-binary==2.9.9
 sqlalchemy==2.0.30
 openai==1.33.0
 tronpy==0.4.2
-pytest==8.2.2
+# pytest==8.2.2  ← مؤقتًا احذفها
