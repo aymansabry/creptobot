@@ -1,6 +1,8 @@
+# utils/config_loader.py
 import os
 from dotenv import load_dotenv
 from typing import Dict, Any
+import redis
 
 class ConfigLoader:
     def __init__(self):
@@ -32,7 +34,20 @@ class ConfigLoader:
                 'url': os.getenv('REDIS_URL', 'redis://localhost:6379/0')
             }
         }
-    
+        
+        # فحص وجود نسخة أخرى تعمل
+        self._check_duplicate_instance()
+
+    def _check_duplicate_instance(self):
+        """فحص وجود نسخة أخرى من البوت تعمل"""
+        redis_client = redis.from_url(self.get('redis.url'))
+        lock_key = f"bot_lock:{self.get('telegram.bot_token')}"
+        
+        # محاولة الحصول على قفل لمدة 60 ثانية
+        acquired = redis_client.set(lock_key, "1", nx=True, ex=60)
+        if not acquired:
+            raise RuntimeError("Another instance of the bot is already running")
+
     def get(self, key: str, default: Any = None) -> Any:
         keys = key.split('.')
         value = self.config
