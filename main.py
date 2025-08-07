@@ -23,103 +23,69 @@ logger = logging.getLogger(__name__)
 
 async def main():
     try:
-        # تحميل الإعدادات
         config = ConfigLoader()
-        
-        # إعداد قاعدة البيانات
+
         engine = create_async_engine(
             config.get('database.url'),
-            echo=True,  # تمكين لتصحيح الأخطاء
+            echo=False,
             pool_size=20,
             max_overflow=10,
             pool_pre_ping=True
         )
-        
-        # إنشاء الجداول
+
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        
-        # إعداد جلسة قاعدة البيانات
+
         AsyncSessionLocal = sessionmaker(
             bind=engine,
             expire_on_commit=False,
             class_=AsyncSession
         )
-        
-        # إعداد Redis
+
         redis_client = redis.from_url(config.get('redis.url'))
-        
-        # إنشاء تطبيق التليجرام مع إعدادات محسنة
-        application = Application.builder() \
-            .token(config.get('telegram.bot_token')) \
-            .concurrent_updates(True) \
-            .read_timeout(60) \
-            .write_timeout(60) \
-            .pool_timeout(60) \
-            .get_updates_read_timeout(60) \
-            .build()
-        
-        # إعداد واجهات APIs
+
         binance_api = ExchangeAPI(
             api_key=config.get('binance.api_key'),
             api_secret=config.get('binance.api_secret'),
             exchange_name='binance'
         )
-        
-        kucoin_api = None
-        if config.get('kucoin.api_key'):
-            kucoin_api = ExchangeAPI(
-                api_key=config.get('kucoin.api_key'),
-                api_secret=config.get('kucoin.api_secret'),
-                exchange_name='kucoin'
-            )
-        
-        # إعداد محرك القرارات
+
         decision_maker = DecisionMaker(exchanges=['binance'])
-        
-        # إعداد منفذ الصفقات
-        trade_executor = TradeExecutor(binance_api=binance_api, kucoin_api=kucoin_api)
-        
-        # مشاركة البيانات بين المعالجات
+
+        trade_executor = TradeExecutor(
+            binance_api=binance_api,
+            main_wallet_address=config.get('trading.main_wallet_address')  # تعديل هنا
+        )
+
+        application = Application.builder() \
+            .token(config.get('telegram.bot_token')) \
+            .concurrent_updates(True) \
+            .build()
+
         application.bot_data.update({
             'db_session': AsyncSessionLocal,
             'redis_client': redis_client,
             'decision_maker': decision_maker,
             'trade_executor': trade_executor,
             'admin_ids': config.get('telegram.admin_ids'),
-            'main_wallet_address': config.get('trading.main_wallet_address'),
-            'owner_tron_address': config.get('trading.owner_tron_address')
+            'main_wallet_address': config.get('trading.main_wallet_address')
         })
-        
-        # تسجيل المعالجات
+
         setup_user_handlers(application)
         setup_trade_handlers(application)
         setup_admin_handlers(application)
-        
-        # بدء البوت
+
         logger.info("Starting the bot...")
         await application.initialize()
-        await application.bot.delete_webhook(drop_pending_updates=True)
+        await application.bot.delete_webhook()
         await application.start()
-        
-        # بدء استقبال التحديثات
-        if application.updater:
-            await application.updater.start_polling(
-                bootstrap_retries=-1,
-                timeout=60,
-                read_timeout=60,
-                connect_timeout=60,
-                pool_timeout=60
-            )
-        
-        logger.info("Bot is now running and handling updates")
-        
-        # البقاء في حلقة التشغيل
+        await application.updater.start_polling()
+
         while True:
             await asyncio.sleep(3600)
-            
+
     except Exception as e:
-        logger.exception(f"Fatal error in main: {str(e)}")
+        logger.exception("Fatal error in main:")
     finally:
         if 'application' in locals():
             await application.stop()
