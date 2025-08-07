@@ -84,17 +84,13 @@ async def main():
 
         # بدء البوت
         logger.info("Starting the bot...")
-        await application.initialize()
-        await application.bot.delete_webhook()  # حذف أي Webhooks قديمة
-        await application.start()
-        await application.updater.start_polling()
 
-        # البقاء في حلقة التشغيل
-        while True:
-            await asyncio.sleep(3600)
+        await application.initialize()
+        await application.bot.delete_webhook()
+        await application.run_polling()
 
     except Exception as e:
-        logger.exception(f"Fatal error in main: {str(e)}")
+        logger.exception("Fatal error in main:")
     finally:
         if 'application' in locals():
             await application.stop()
