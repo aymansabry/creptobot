@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import logging
 from telegram.ext import Application
@@ -23,8 +22,10 @@ logger = logging.getLogger(__name__)
 
 async def main():
     try:
+        # تحميل الإعدادات
         config = ConfigLoader()
 
+        # إعداد قاعدة البيانات
         engine = create_async_engine(
             config.get('database.url'),
             echo=False,
@@ -33,35 +34,40 @@ async def main():
             pool_pre_ping=True
         )
 
+        # إنشاء الجداول
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
+        # إعداد جلسة قاعدة البيانات
         AsyncSessionLocal = sessionmaker(
             bind=engine,
             expire_on_commit=False,
             class_=AsyncSession
         )
 
+        # إعداد Redis
         redis_client = redis.from_url(config.get('redis.url'))
 
+        # إعداد واجهات APIs
         binance_api = ExchangeAPI(
             api_key=config.get('binance.api_key'),
             api_secret=config.get('binance.api_secret'),
             exchange_name='binance'
         )
 
+        # إعداد محرك القرارات
         decision_maker = DecisionMaker(exchanges=['binance'])
 
-        trade_executor = TradeExecutor(
-            binance_api=binance_api,
-            main_wallet_address=config.get('trading.main_wallet_address')  # تعديل هنا
-        )
+        # إعداد منفذ الصفقات
+        trade_executor = TradeExecutor(binance_api=binance_api, main_wallet=config.get('trading.main_wallet_address'))
 
+        # إنشاء تطبيق التليجرام
         application = Application.builder() \
             .token(config.get('telegram.bot_token')) \
             .concurrent_updates(True) \
             .build()
 
+        # مشاركة البيانات بين المعالجات
         application.bot_data.update({
             'db_session': AsyncSessionLocal,
             'redis_client': redis_client,
@@ -71,21 +77,24 @@ async def main():
             'main_wallet_address': config.get('trading.main_wallet_address')
         })
 
+        # تسجيل المعالجات
         setup_user_handlers(application)
         setup_trade_handlers(application)
         setup_admin_handlers(application)
 
+        # بدء البوت
         logger.info("Starting the bot...")
         await application.initialize()
-        await application.bot.delete_webhook()
+        await application.bot.delete_webhook()  # حذف أي Webhooks قديمة
         await application.start()
         await application.updater.start_polling()
 
+        # البقاء في حلقة التشغيل
         while True:
             await asyncio.sleep(3600)
 
     except Exception as e:
-        logger.exception("Fatal error in main:")
+        logger.exception(f"Fatal error in main: {str(e)}")
     finally:
         if 'application' in locals():
             await application.stop()
