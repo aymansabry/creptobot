@@ -1,11 +1,15 @@
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import ContextTypes, CommandHandler
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in context.bot_data['admin_ids']:
-        return await update.message.reply_text("❌ غير مصرح لك.")
+def setup_admin_handlers(application):
+    application.add_handler(CommandHandler("admin", admin_command))
 
-    await update.message.reply_text("📊 النظام يعمل بنجاح. تحت السيطرة.")
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_ids = context.bot_data.get("admin_ids", [])
+    user_id = update.effective_user.id
 
-def setup_admin_handlers(app: Application):
-    app.add_handler(CommandHandler("admin", admin_stats))
+    if user_id not in admin_ids:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول إلى لوحة الإدارة.")
+        return
+
+    await update.message.reply_text("✅ مرحبًا بك في لوحة التحكم الإدارية.\nاستخدم الأوامر الإدارية المتاحة.")
