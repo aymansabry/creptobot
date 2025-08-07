@@ -1,14 +1,18 @@
 from binance.client import Client
 from core.config import config
-from utils.logger import wallet_logger
+from utils.logger import wallet_logger, log_error
 from datetime import datetime
 import threading
 
 class VirtualWallet:
     def __init__(self):
-        self.client = Client(config.BINANCE_API_KEY, config.BINANCE_API_SECRET)
+        self.client = Client(
+            config.BINANCE_API_KEY,
+            config.BINANCE_API_SECRET
+        )
         self.wallets = {}  # {user_id: {'balance': float, 'deposits': []}}
         self.lock = threading.Lock()
+        wallet_logger.info("Virtual wallet system initialized")
         
     def create_wallet(self, user_id):
         """إنشاء محفظة افتراضية جديدة"""
@@ -17,9 +21,9 @@ class VirtualWallet:
                 self.wallets[user_id] = {
                     'balance': 0.0,
                     'deposits': [],
-                    'created_at': datetime.now()
+                    'created_at': datetime.now().isoformat()
                 }
-                wallet_logger.info(f"Created virtual wallet for user {user_id}")
+                wallet_logger.info(f"Created new wallet for user {user_id}")
             return self.wallets[user_id]
     
     async def verify_deposit(self, user_id, tx_hash):
@@ -35,13 +39,14 @@ class VirtualWallet:
                         self.wallets[user_id]['deposits'].append({
                             'tx_hash': tx_hash,
                             'amount': amount,
-                            'timestamp': datetime.now()
+                            'timestamp': datetime.now().isoformat()
                         })
                     wallet_logger.info(f"Deposit confirmed for user {user_id}: {amount} USDT")
                     return True
+            wallet_logger.warning(f"Deposit not confirmed for tx_hash: {tx_hash}")
             return False
         except Exception as e:
-            wallet_logger.error(f"Deposit verification failed: {str(e)}")
+            log_error(f"Deposit verification failed: {str(e)}", 'wallet')
             return False
     
     def get_balance(self, user_id):
@@ -55,6 +60,8 @@ class VirtualWallet:
                 self.wallets[user_id]['balance'] -= amount
                 wallet_logger.info(f"Transferred {amount} USDT to trading for user {user_id}")
                 return True
+            wallet_logger.warning(f"Insufficient balance for user {user_id}")
             return False
 
+# تهيئة المحفظة الافتراضية
 virtual_wallet = VirtualWallet()
