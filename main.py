@@ -29,7 +29,7 @@ async def main():
         # إعداد قاعدة البيانات
         engine = create_async_engine(
             config.get('database.url'),
-            echo=False,
+            echo=True,  # تمكين لتصحيح الأخطاء
             pool_size=20,
             max_overflow=10,
             pool_pre_ping=True
@@ -46,16 +46,18 @@ async def main():
             class_=AsyncSession
         )
         
-        # إعداد Redis (مع التعامل مع حالة عدم الاتصال)
-        redis_client = None
-        if not config.get('redis.disabled', False):
-            try:
-                redis_client = redis.from_url(config.get('redis.url'))
-                redis_client.ping()
-                logger.info("Redis connection established")
-            except Exception as e:
-                logger.warning(f"Failed to connect to Redis: {str(e)}")
-                redis_client = None
+        # إعداد Redis
+        redis_client = redis.from_url(config.get('redis.url'))
+        
+        # إنشاء تطبيق التليجرام مع إعدادات محسنة
+        application = Application.builder() \
+            .token(config.get('telegram.bot_token')) \
+            .concurrent_updates(True) \
+            .read_timeout(60) \
+            .write_timeout(60) \
+            .pool_timeout(60) \
+            .get_updates_read_timeout(60) \
+            .build()
         
         # إعداد واجهات APIs
         binance_api = ExchangeAPI(
@@ -64,7 +66,6 @@ async def main():
             exchange_name='binance'
         )
         
-        # إعداد KuCoin API (اختياري)
         kucoin_api = None
         if config.get('kucoin.api_key'):
             kucoin_api = ExchangeAPI(
@@ -77,25 +78,12 @@ async def main():
         decision_maker = DecisionMaker(exchanges=['binance'])
         
         # إعداد منفذ الصفقات
-        trade_executor = TradeExecutor(
-            binance_api=binance_api,
-            kucoin_api=kucoin_api
-        )
-        
-        # إنشاء تطبيق التليجرام
-        application = Application.builder() \
-            .token(config.get('telegram.bot_token')) \
-            .concurrent_updates(True) \
-            .read_timeout(30) \
-            .write_timeout(30) \
-            .pool_timeout(30) \
-            .get_updates_read_timeout(30) \
-            .build()
+        trade_executor = TradeExecutor(binance_api=binance_api, kucoin_api=kucoin_api)
         
         # مشاركة البيانات بين المعالجات
         application.bot_data.update({
             'db_session': AsyncSessionLocal,
-            'redis_client': redis_client,  # قد يكون None
+            'redis_client': redis_client,
             'decision_maker': decision_maker,
             'trade_executor': trade_executor,
             'admin_ids': config.get('telegram.admin_ids'),
@@ -115,15 +103,16 @@ async def main():
         await application.start()
         
         # بدء استقبال التحديثات
-        updater = application.updater
-        if updater:
-            await updater.start_polling(
+        if application.updater:
+            await application.updater.start_polling(
                 bootstrap_retries=-1,
-                timeout=30,
-                read_timeout=30,
-                connect_timeout=30,
-                pool_timeout=30
+                timeout=60,
+                read_timeout=60,
+                connect_timeout=60,
+                pool_timeout=60
             )
+        
+        logger.info("Bot is now running and handling updates")
         
         # البقاء في حلقة التشغيل
         while True:
@@ -138,7 +127,4 @@ async def main():
         logger.info("Bot has been stopped")
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
