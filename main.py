@@ -9,10 +9,17 @@ from telegram.ext import (
     CallbackContext,
     ConversationHandler
 )
+
+# تهيئة اللوغر الأساسي
+from utils.logger import setup_logging
+setup_logging()
+
+# استيراد المكونات الأساسية
 from core.config import config
 from core.virtual_wallet import virtual_wallet
 from core.trading_engine import TradingEngine
-from utils.logger import setup_logging
+
+# استيراد handlers
 from handlers.deposit import (
     start_deposit,
     receive_deposit_amount,
@@ -24,8 +31,7 @@ from handlers.deposit import (
 from handlers.trading import start_trading, execute_trade
 from handlers.wallet import show_balance
 
-# Initialize components
-setup_logging()
+# تهيئة محرك التداول
 engine = TradingEngine()
 
 async def start(update: Update, context: CallbackContext):
@@ -41,10 +47,6 @@ async def start(update: Update, context: CallbackContext):
         "/trade - لبدء التداول\n"
         "/balance - لعرض رصيدك"
     )
-
-async def error_handler(update: Update, context: CallbackContext):
-    """Log errors"""
-    logging.error(f"Update {update} caused error: {context.error}")
 
 def main():
     """Start the bot"""
@@ -67,12 +69,8 @@ def main():
     app.add_handler(CommandHandler("balance", show_balance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, execute_trade))
     
-    # Error handler
-    app.add_error_handler(error_handler)
-
     # Start the bot
     app.run_polling()
 
 if __name__ == "__main__":
-    # Start background tasks
-    asyncio.run(main())
+    main()
