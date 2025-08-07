@@ -14,7 +14,7 @@ from utils.logger import Logger
 logger = Logger()
 
 from core.config import config
-from core.virtual_wallet import virtual_wallet
+virtual_wallet = get_virtual_wallet()
 from core.trading_engine import TradingEngine
 
 # استيراد ال handlers
