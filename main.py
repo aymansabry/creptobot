@@ -1,3 +1,4 @@
+#main.py
 import asyncio
 import logging
 from telegram.ext import Application
@@ -55,11 +56,23 @@ async def main():
             exchange_name='binance'
         )
         
+        # إعداد KuCoin API (اختياري)
+        kucoin_api = None
+        if config.get('kucoin.api_key'):
+            kucoin_api = ExchangeAPI(
+                api_key=config.get('kucoin.api_key'),
+                api_secret=config.get('kucoin.api_secret'),
+                exchange_name='kucoin'
+            )
+        
         # إعداد محرك القرارات
         decision_maker = DecisionMaker(exchanges=['binance'])
         
         # إعداد منفذ الصفقات
-        trade_executor = TradeExecutor(binance_api=binance_api)
+        trade_executor = TradeExecutor(
+            binance_api=binance_api,
+            kucoin_api=kucoin_api
+        )
         
         # إنشاء تطبيق التليجرام
         application = Application.builder() \
@@ -74,7 +87,8 @@ async def main():
             'decision_maker': decision_maker,
             'trade_executor': trade_executor,
             'admin_ids': config.get('telegram.admin_ids'),
-            'main_wallet_address': config.get('trading.main_wallet_address')
+            'main_wallet_address': config.get('trading.main_wallet_address'),
+            'owner_tron_address': config.get('trading.owner_tron_address')
         })
         
         # تسجيل المعالجات
