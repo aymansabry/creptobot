@@ -1,7 +1,6 @@
-from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from typing import Optional, List
+from typing import Dict, Optional, List, Any
 import uuid
 from .models import User, Wallet, Trade, ContinuousInvestment, SystemSettings
 
@@ -9,7 +8,7 @@ async def get_user(session: AsyncSession, telegram_id: int) -> Optional[User]:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
     return result.scalars().first()
 
-async def create_user(session: AsyncSession, user_data: Dict) -> User:
+async def create_user(session: AsyncSession, user_data: Dict[str, Any]) -> User:
     user = User(**user_data)
     session.add(user)
     await session.commit()
@@ -19,20 +18,20 @@ async def get_user_wallet(session: AsyncSession, user_id: int) -> Optional[Walle
     result = await session.execute(select(Wallet).where(Wallet.user_id == user_id))
     return result.scalars().first()
 
-async def create_wallet(session: AsyncSession, wallet_data: Dict) -> Wallet:
+async def create_wallet(session: AsyncSession, wallet_data: Dict[str, Any]) -> Wallet:
     wallet = Wallet(**wallet_data)
     session.add(wallet)
     await session.commit()
     return wallet
 
-async def update_wallet_balance(session: AsyncSession, user_id: int, balances: Dict) -> Wallet:
+async def update_wallet_balance(session: AsyncSession, user_id: int, balances: Dict[str, float]) -> Wallet:
     wallet = await get_user_wallet(session, user_id)
     if wallet:
         wallet.balances = balances
         await session.commit()
     return wallet
 
-async def create_trade_record(session: AsyncSession, trade_data: Dict) -> Trade:
+async def create_trade_record(session: AsyncSession, trade_data: Dict[str, Any]) -> Trade:
     trade_data['trade_uuid'] = str(uuid.uuid4())
     trade = Trade(**trade_data)
     session.add(trade)
@@ -48,7 +47,7 @@ async def get_user_trades(session: AsyncSession, user_id: int, limit: int = 10) 
     )
     return result.scalars().all()
 
-async def create_continuous_investment(session: AsyncSession, investment_data: Dict) -> ContinuousInvestment:
+async def create_continuous_investment(session: AsyncSession, investment_data: Dict[str, Any]) -> ContinuousInvestment:
     investment = ContinuousInvestment(**investment_data)
     session.add(investment)
     await session.commit()
@@ -61,7 +60,7 @@ async def get_continuous_investment(session: AsyncSession, user_id: int) -> Opti
     )
     return result.scalars().first()
 
-async def update_continuous_investment(session: AsyncSession, user_id: int, updates: Dict) -> ContinuousInvestment:
+async def update_continuous_investment(session: AsyncSession, user_id: int, updates: Dict[str, Any]) -> ContinuousInvestment:
     investment = await get_continuous_investment(session, user_id)
     if investment:
         for key, value in updates.items():
