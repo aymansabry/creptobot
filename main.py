@@ -18,12 +18,10 @@ logger = logging.getLogger(__name__)
 
 async def init_and_start_tasks(application: Application):
     """Initializes the database tables and starts continuous trading loops."""
-    # 1. Create database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created successfully.")
 
-    # 2. Start continuous trading tasks
     trade_logic = TradeLogic(application.bot)
     async with async_session() as db_session:
         result = await db_session.execute(select(Wallet).filter(Wallet.is_continuous_trading == True))
@@ -34,24 +32,24 @@ async def init_and_start_tasks(application: Application):
 
 def main():
     """Starts the bot."""
-    # Build the application with a single post_init function
     application = Application.builder().token(settings.BOT_TOKEN).post_init(init_and_start_tasks).build()
-
+    
     # --- Register Handlers ---
     # Common handlers
     application.add_handler(CommandHandler("start", common.start))
-
+    application.add_handler(MessageHandler(filters.Regex(BACK_TO_MAIN), common.start))
+    
     # User handlers
     application.add_handler(MessageHandler(filters.Regex(START_TRADING), user.handle_start_trading))
     application.add_handler(MessageHandler(filters.Regex(AUTO_TRADE), user.handle_auto_trade))
     application.add_handler(MessageHandler(filters.Regex(MANUAL_TRADE), user.handle_manual_trade))
     application.add_handler(MessageHandler(filters.Regex(VIEW_BALANCE), user.handle_view_balance))
-    application.add_handler(MessageHandler(filters.Regex(BACK_TO_MAIN), common.start))
-
+    
     # Admin handlers
     application.add_handler(CommandHandler("admin", admin.handle_admin_panel))
     application.add_handler(MessageHandler(filters.Regex(VIEW_USERS), admin.handle_view_users))
-
+    application.add_handler(MessageHandler(filters.Regex(SWITCH_TO_USER), admin.handle_switch_to_user))
+    
     # Run the bot
     logger.info("Bot started successfully.")
     application.run_polling(drop_pending_updates=True)
