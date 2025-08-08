@@ -1,62 +1,68 @@
 # project_root/services/ai_engine.py
 
-from core.config import settings
 import openai
+from core.config import settings
 import json
+import random
+import re
 
 class AIEngine:
-    """
-    AI Engine for generating trading signals using OpenAI's API.
-    """
     def __init__(self):
+        # Set the OpenAI API key directly from settings
         openai.api_key = settings.OPENAI_API_KEY
-        self.model = "gpt-3.5-turbo"
+        self.model = "gpt-3.5-turbo" # Can be updated to gpt-4 if you have access
 
-    async def generate_signal(self, market_data: dict, strategy: str) -> dict:
+    async def get_trade_recommendation(self, user_id: int):
         """
-        Generates a trading signal (buy/sell) based on real-time market data.
+        Generates a list of AI-powered trade recommendations using ChatGPT.
+        The output is a structured JSON array for easy parsing.
         """
-        prompt = self._build_prompt(market_data, strategy)
-        
-        response = await openai.ChatCompletion.acreate(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You are a specialized trading bot AI. You analyze market data and provide precise trading signals in a JSON format."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
+        # A list of symbols and exchanges to choose from
+        symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
+        exchanges = ["binance", "kucoin"]
+
+        # Prompt the AI to generate structured, dynamic recommendations
+        prompt = (
+            "You are an AI-powered crypto trading assistant. Generate a list of 5 unique trading recommendations "
+            "for a user. For each recommendation, provide the following structured data as a JSON array:\n"
+            "1. `code`: A unique trade code starting with 'AI-'.\n"
+            "2. `symbol`: A trading pair from this list: BTC/USDT, ETH/USDT, SOL/USDT, XRP/USDT.\n"
+            "3. `exchange`: An exchange from this list: binance, kucoin.\n"
+            "4. `potential_profit`: A random percentage between 2.0% and 8.0%.\n"
+            "5. `duration_minutes`: A random duration in minutes between 30 and 120.\n"
+            "6. `entry_strategy`: A brief, one-sentence description of the entry strategy.\n"
+            "7. `exit_strategy`: A brief, one-sentence description of the exit strategy.\n"
+            "The output must be a valid JSON array, with no extra text or explanations before or after the JSON."
         )
-        
-        ai_response_text = response.choices[0].message.content
-        return self._parse_ai_response(ai_response_text)
-    
-    def _build_prompt(self, market_data: dict, strategy: str) -> str:
-        """Constructs a detailed prompt for the AI."""
-        if strategy == "arbitrage":
-            return (
-                f"Analyze the following data for an arbitrage opportunity:\n"
-                f"Binance Price: {market_data.get('binance_price')}\n"
-                f"KuCoin Price: {market_data.get('kucoin_price')}\n"
-                f"What is the best action (buy/sell), on which exchange, for which currency, and what amount should be used to minimize risk and maximize profit? Provide the output in a JSON-like format with keys: action, symbol, exchange, amount, reason."
-            )
-        elif strategy == "spot":
-            return (
-                f"Analyze the following real-time market data for a spot trading opportunity:\n"
-                f"Symbol: {market_data.get('symbol')}\n"
-                f"Current Price: {market_data.get('price')}\n"
-                f"Volume (24h): {market_data.get('volume_24h')}\n"
-                f"RSI: {market_data.get('rsi')}\n"
-                f"MACD: {market_data.get('macd')}\n"
-                f"Sentiment: {market_data.get('sentiment')}\n"
-                f"Should I buy or sell this currency? What is the recommended amount to invest? Provide the output in a JSON format with keys: action, symbol, amount, reason."
-            )
-        
-        return "No strategy specified."
 
-    def _parse_ai_response(self, text: str) -> dict:
-        """Parses the AI's string response into a dictionary."""
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            print(f"Warning: AI response was not valid JSON. Response: {text}")
-            return {"action": "hold", "reason": "Could not parse AI response."}
+            response = openai.ChatCompletion.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that provides JSON output."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+
+            # Extract and clean the JSON string from the response
+            recommendations_json = response.choices[0].message.content.strip()
+            
+            # The AI might add backticks, so we'll remove them to ensure valid JSON
+            clean_json = re.sub(r'```json\n|\n```', '', recommendations_json)
+            
+            recommendations = json.loads(clean_json)
+
+            # Add static data like commission rates and fees
+            commission_rate = 0.05
+            exchange_fees = 0.001
+            for rec in recommendations:
+                rec['commission_rate'] = commission_rate
+                rec['exchange_fees'] = exchange_fees
+            
+            return recommendations
+
+        except Exception as e:
+            print(f"Error communicating with ChatGPT API: {e}")
+            return []
