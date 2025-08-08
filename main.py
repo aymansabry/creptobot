@@ -44,6 +44,11 @@ def main():
     application.add_handler(MessageHandler(filters.Regex(AUTO_TRADE), user.handle_auto_trade))
     application.add_handler(MessageHandler(filters.Regex(MANUAL_TRADE), user.handle_manual_trade))
     application.add_handler(MessageHandler(filters.Regex(VIEW_BALANCE), user.handle_view_balance))
+    application.add_handler(MessageHandler(filters.Regex(DEPOSIT_WITHDRAW), user.handle_deposit_withdraw))
+    
+    # Handlers for deposit/withdraw requests via text messages
+    application.add_handler(MessageHandler(filters.Regex(r"^إيداع\s+\d+(\.\d+)?$"), user.handle_deposit_request))
+    application.add_handler(MessageHandler(filters.Regex(r"^سحب\s+\d+(\.\d+)?$"), user.handle_withdraw_request))
     
     # Admin handlers
     application.add_handler(CommandHandler("admin", admin.handle_admin_panel))
