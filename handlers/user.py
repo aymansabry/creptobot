@@ -1,7 +1,7 @@
 # project_root/handlers/user.py
 
 import re
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
 from db import crud
 from db.database import async_session
@@ -11,6 +11,7 @@ from services.trade_executor import TradeExecutor
 from services.wallet_manager import WalletManager
 from utils.constants import MESSAGES
 import asyncio
+from core.config import settings
 
 # Initialize services
 trade_executor = TradeExecutor()
@@ -28,12 +29,12 @@ async def handle_start_trading(update: Update, context: ContextTypes.DEFAULT_TYP
         "اختر نوع الصفقة التي ترغب بها:",
         reply_markup=trade_type_menu
     )
-
+    
 async def handle_trial_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Placeholder for starting a trial trade."""
     await update.message.reply_text("هذه صفقة تجريبية. سيتم محاكاة التداول بدون أي أموال حقيقية.")
     # TODO: Implement the trial trading logic here
-
+    
 async def handle_real_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Displays real AI-generated trades to the user.
@@ -42,7 +43,6 @@ async def handle_real_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not trade_logic:
         trade_logic = TradeLogic(context.bot)
 
-    # Fetch AI-generated recommendations
     trades = await trade_logic.get_ai_trades(num_trades=5)
     
     if not trades:
@@ -51,8 +51,6 @@ async def handle_real_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     available_trades_info = "**صفقات متاحة حالياً (مقترحة بواسطة AI):**\n"
     for i, trade in enumerate(trades):
-        # Calculate net profit rate after fees and commission
-        # Note: 'potential_profit' is a percentage, so convert to a factor
         profit_factor = trade['potential_profit'] / 100
         net_profit_rate = (profit_factor - (profit_factor * trade['commission_rate']) - trade['exchange_fees']) * 100
         
@@ -102,7 +100,6 @@ async def handle_manual_trade(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handles the 'صفقة واحدة' button."""
     user_id = update.effective_user.id
     
-    # Get a single AI recommendation
     recommendations = await trade_logic.get_ai_trades(num_trades=1)
     if not recommendations:
         await update.message.reply_text("عذراً، لم أتمكن من توليد صفقة في الوقت الحالي. يرجى المحاولة لاحقاً.")
@@ -111,7 +108,7 @@ async def handle_manual_trade(update: Update, context: ContextTypes.DEFAULT_TYPE
     await trade_logic.execute_single_trade(user_id, recommendations[0])
     
 async def handle_view_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (باقي الكود لم يتغير)
+    """Handles the 'عرض الرصيد' button."""
     user_id = update.effective_user.id
     async with async_session() as db_session:
         wallet = await crud.get_wallet_by_user_id(db_session, user_id)
@@ -120,7 +117,7 @@ async def handle_view_balance(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_markdown(message)
 
 async def handle_deposit_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (باقي الكود لم يتغير)
+    """Guides the user on how to deposit or withdraw funds."""
     message = """
     **لإيداع مبلغ:**
     أرسل لنا رسالة تحتوي على:
@@ -137,7 +134,7 @@ async def handle_deposit_withdraw(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_markdown(message)
     
 async def handle_deposit_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (باقي الكود لم يتغير)
+    """Initiates the automated deposit process."""
     user_id = update.effective_user.id
     message_text = update.message.text
     
@@ -167,7 +164,7 @@ async def handle_deposit_request(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_markdown(message, reply_markup=ReplyKeyboardMarkup([["تم الإيداع"]], resize_keyboard=True, one_time_keyboard=True))
         
 async def handle_deposit_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (باقي الكود لم يتغير)
+    """Handles the 'تم الإيداع' button and starts the automated verification."""
     user_id = update.effective_user.id
     amount = context.user_data.get('deposit_amount')
     deposit_address = context.user_data.get('deposit_address')
@@ -193,7 +190,7 @@ async def handle_deposit_confirmation(update: Update, context: ContextTypes.DEFA
     context.user_data.pop('deposit_address', None)
 
 async def handle_withdraw_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (باقي الكود لم يتغير)
+    """Handles withdraw requests from users."""
     user_id = update.effective_user.id
     message_text = update.message.text
     
