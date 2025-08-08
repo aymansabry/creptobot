@@ -1,25 +1,78 @@
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ContextTypes, CallbackQueryHandler
 
-async def trade_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in context.bot_data['admin_ids']:
-        return await update.message.reply_text("❌ غير مصرح لك.")
+def setup_trade_handlers(application):
+    application.add_handler(CallbackQueryHandler(trade_menu_handler, pattern="^trade_"))
 
-    decision_maker = context.bot_data['decision_maker']
-    trade_executor = context.bot_data['trade_executor']
-    db_session = context.bot_data['db_session']
+async def trade_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    symbols = ["BTC/USDT", "ETH/USDT"]
-    opportunities = await decision_maker.get_top_opportunities(symbols)
+    if query.data == "trade_start":
+        await start_trading_flow(query, context)
+    elif query.data == "trade_portfolio":
+        await show_portfolio(query, context)
+    elif query.data == "trade_invest":
+        await invest_amount(query, context)
 
-    if not opportunities:
-        return await update.message.reply_text("⚠️ لا توجد فرص تداول مناسبة الآن.")
+async def start_trading_flow(query, context):
+    decision_maker = context.bot_data["decision_maker"]
+    trade_executor = context.bot_data["trade_executor"]
 
-    top_opportunity = opportunities[0]
-    async with db_session() as session:
-        await trade_executor.execute(session, top_opportunity, amount=50)
+    # طلب صفقة من الذكاء الاصطناعي
+    opportunity = await decision_maker.get_best_opportunity()
 
-    await update.message.reply_text(f"✅ تم تنفيذ صفقة على {top_opportunity['symbol']} بنجاح.")
+    if not opportunity:
+        await query.edit_message_text("❌ لا توجد فرصة تداول مناسبة حاليًا.")
+        return
 
-def setup_trade_handlers(app: Application):
-    app.add_handler(CommandHandler("trade", trade_now))
+    # تنفيذ الصفقة فعليًا
+    result = await trade_executor.execute_trade(opportunity)
+
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ تم تنفيذ صفقة:\n\n"
+            f"الزوج: {opportunity['pair']}\n"
+            f"الربح المتوقع: {opportunity['expected_profit']}%"
+        )
+    else:
+        await query.edit_message_text(f"⚠️ فشل تنفيذ الصفقة: {result['error']}")
+
+async def show_portfolio(query, context):
+    user_id = query.from_user.id
+    db_session_factory = context.bot_data["db_session"]
+    async with db_session_factory() as session:
+        # جلب المحفظة من قاعدة البيانات
+        from db.models import User
+        user = await session.get(User, user_id)
+
+        if not user:
+            await query.edit_message_text("❌ لم يتم العثور على بيانات محفظتك.")
+            return
+
+        await query.edit_message_text(
+            f"💼 محفظتك:\n\n"
+            f"الرصيد: {user.balance:.2f} USDT\n"
+            f"استثمار حالي: {user.investment:.2f} USDT"
+        )
+
+async def invest_amount(query, context):
+    user_id = query.from_user.id
+    db_session_factory = context.bot_data["db_session"]
+    async with db_session_factory() as session:
+        from db.models import User
+        user = await session.get(User, user_id)
+
+        if not user:
+            await query.edit_message_text("❌ لم يتم العثور على حسابك.")
+            return
+
+        # استثمار وهمي بقيمة 10 USDT
+        user.investment += 10
+        user.balance -= 10
+        await session.commit()
+
+        await query.edit_message_text(
+            f"💸 تم استثمار 10 USDT.\n"
+            f"الرصيد الجديد: {user.balance:.2f} USDT"
+        )
