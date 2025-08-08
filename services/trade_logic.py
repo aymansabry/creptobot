@@ -15,9 +15,9 @@ class TradeLogic:
         self.ai_engine = AIEngine()
         self.running_loops = {}
 
-    async def get_ai_trades(self, num_trades: int = 5):
+    async def get_ai_trades(self):
         """Fetches a list of AI-recommended trades from the AI engine."""
-        return await self.ai_engine.get_trade_recommendation(num_trades)
+        return await self.ai_engine.get_trade_recommendation()
 
     async def continuous_trading_loop(self, user_id: int):
         """Starts a continuous trading loop for a user based on AI recommendations."""
@@ -43,7 +43,7 @@ class TradeLogic:
                     
                     if not open_trade:
                         # Fetch new AI recommendations to select from
-                        recommendations = await self.ai_engine.get_trade_recommendation(user_id)
+                        recommendations = await self.get_ai_trades()
                         if recommendations:
                             selected_trade = random.choice(recommendations)
                             await self.execute_single_trade(user_id, selected_trade)
@@ -92,6 +92,11 @@ class TradeLogic:
                 
                 entry_price = ticker['ask']
                 
+                # Check for sufficient balance before executing the real order
+                if trade_amount > wallet.balance_usdt:
+                    await self.bot.send_message(chat_id=user_id, text=MESSAGES['insufficient_balance'])
+                    return "insufficient_balance"
+
                 await self.trade_executor.execute_order(exchange, symbol, 'market', 'buy', trade_amount / entry_price)
                 
                 await crud.create_trade(db_session, user_id, symbol, exchange, 'spot', trade_amount, entry_price)
@@ -102,7 +107,6 @@ class TradeLogic:
                 )
                 return "success"
             else:
-                # Fallback to a default trade if no AI recommendation is given
                 await self.execute_single_trade(user_id, {'symbol': "BTC/USDT", 'exchange': "binance"})
 
     async def monitor_and_close_trade(self, trade, db_session):
@@ -112,7 +116,7 @@ class TradeLogic:
 
         current_price = current_ticker['bid']
         # This profit goal would be dynamically set by the AI recommendation
-        profit_goal = 1.0 # Placeholder
+        profit_goal = 1.0
         profit_percentage = ((current_price - trade.entry_price) / trade.entry_price) * 100
         
         if profit_percentage >= profit_goal:
