@@ -3,124 +3,122 @@
 import asyncio
 from db import crud
 from db.database import async_session
-from services.ai_engine import AIEngine
 from services.trade_executor import TradeExecutor
-from services.wallet_manager import WalletManager
-from core.config import settings
-from datetime import datetime
+import random
+from utils.constants import MESSAGES
 
 class TradeLogic:
     def __init__(self, bot):
-        self.ai_engine = AIEngine()
-        self.trade_executor = TradeExecutor()
-        self.wallet_manager = WalletManager()
         self.bot = bot
+        self.trade_executor = TradeExecutor()
+        self.running_loops = {}
+
+    async def continuous_trading_loop(self, user_id: int):
+        if user_id in self.running_loops and self.running_loops[user_id]:
+            return
+
+        self.running_loops[user_id] = True
+        
+        await self.bot.send_message(
+            chat_id=user_id,
+            text=MESSAGES['continuous_trading_started']
+        )
+        
+        try:
+            while self.running_loops.get(user_id):
+                async with async_session() as db_session:
+                    wallet = await crud.get_wallet_by_user_id(db_session, user_id)
+                    if not wallet or wallet.balance_usdt < 1.0:
+                        await self.bot.send_message(chat_id=user_id, text=MESSAGES['insufficient_balance'])
+                        break
+
+                    open_trade = await crud.get_open_trade(db_session, user_id)
+                    
+                    if not open_trade:
+                        await self.execute_single_trade(user_id)
+                        await asyncio.sleep(5)
+                        open_trade = await crud.get_open_trade(db_session, user_id)
+
+                    if open_trade:
+                        await self.monitor_and_close_trade(open_trade, db_session)
+                    
+                await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.running_loops.pop(user_id, None)
+            
+            async with async_session() as db_session:
+                wallet = await crud.get_wallet_by_user_id(db_session, user_id)
+                if wallet:
+                    wallet.is_continuous_trading = False
+                    await db_session.commit()
+                    
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=MESSAGES['continuous_trading_deactivated']
+            )
 
     async def execute_single_trade(self, user_id: int):
-        """Executes a single manual trade for a user."""
         async with async_session() as db_session:
             wallet = await crud.get_wallet_by_user_id(db_session, user_id)
             if not wallet or wallet.balance_usdt < 1.0:
                 return "insufficient_balance"
 
-            # 1. AI Signal Generation (for a spot trade example)
-            market_data = {
-                'symbol': 'BTC/USDT', # Placeholder for a real symbol from market data feed
-                'price': 65000,
-                'volume_24h': 1000000000
-            }
-            signal = await self.ai_engine.generate_signal(market_data, 'spot')
-
-            if signal.get('action') == 'buy':
-                amount_to_trade = signal.get('amount', 1.0)
-                if amount_to_trade > wallet.balance_usdt:
-                    amount_to_trade = wallet.balance_usdt
-
-                # 2. Execute the trade
-                trade_result = await self.trade_executor.execute_order('binance', 'BTC/USDT', 'market', 'buy', amount_to_trade)
-                if trade_result:
-                    # 3. Record the trade in the database
-                    trade_data = {
-                        'wallet_id': wallet.id,
-                        'symbol': 'BTC/USDT',
-                        'exchange': 'binance',
-                        'entry_price': trade_result['price'],
-                        'amount': trade_result['amount'],
-                        'type': 'spot',
-                        'is_demo': False
-                    }
-                    new_trade = await crud.create_trade(db_session, trade_data)
-                    await self.bot.send_message(user_id, f"✅ تم تنفيذ صفقة شراء ناجحة على {new_trade.symbol} بسعر {new_trade.entry_price}")
-                    await self.bot.send_message(settings.ADMIN_ID, f"🆕 صفقة جديدة: المستخدم {user_id} اشترى {new_trade.amount} من {new_trade.symbol}")
-                    
-                    # This is where a sell signal would be generated and executed later
-                    # await self.execute_sell_trade(new_trade.id, new_trade.amount, new_trade.entry_price)
-
+            symbol = "BTC/USDT"
+            exchange = "binance"
+            trade_amount = wallet.balance_usdt * 0.95
+            
+            ticker = await self.trade_executor.get_ticker_price(exchange, symbol)
+            if not ticker:
+                await self.bot.send_message(chat_id=user_id, text=f"Error getting price for {symbol}.")
+                return "error"
+            
+            entry_price = ticker['ask']
+            
+            await self.trade_executor.execute_order(exchange, symbol, 'market', 'buy', trade_amount / entry_price)
+            
+            await crud.create_trade(db_session, user_id, symbol, exchange, 'spot', trade_amount, entry_price)
+            
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ تم فتح صفقة جديدة:\nالرمز: {symbol}\nسعر الدخول: {entry_price:.2f} USDT"
+            )
             return "success"
 
-    async def continuous_trading_loop(self, user_id: int):
-        """Continuous loop for automated trading."""
-        while True:
-            async with async_session() as db_session:
-                wallet = await crud.get_wallet_by_user_id(db_session, user_id)
-                if not wallet or not wallet.is_continuous_trading:
-                    await self.bot.send_message(user_id, "🛑 تم إيقاف التداول المستمر.")
-                    break
-                
-                # Check for open trades, if any, don't open new ones.
-                open_trades = await crud.get_open_trades(db_session, wallet.id)
-                if open_trades:
-                    await asyncio.sleep(60) # Wait if there's an open trade
-                    continue
+    async def monitor_and_close_trade(self, trade, db_session):
+        current_ticker = await self.trade_executor.get_ticker_price(trade.exchange, trade.symbol)
+        if not current_ticker:
+            return
 
-                # 1. AI Signal Generation
-                market_data = await self.get_market_data()
-                signal = await self.ai_engine.generate_signal(market_data, 'arbitrage')
+        current_price = current_ticker['bid']
+        profit_percentage = ((current_price - trade.entry_price) / trade.entry_price) * 100
+        
+        if profit_percentage >= 1.0:
+            profit_usdt = (current_price - trade.entry_price) * (trade.amount / trade.entry_price)
+            commission_rate = 0.05
+            commission_amount = profit_usdt * commission_rate
+            net_profit = profit_usdt - commission_amount
+            
+            await self.trade_executor.execute_order(trade.exchange, trade.symbol, 'market', 'sell', trade.amount / trade.entry_price)
 
-                if signal.get('action') == 'buy':
-                    amount_to_trade = signal.get('amount', 1.0)
-                    if amount_to_trade > wallet.balance_usdt:
-                        amount_to_trade = wallet.balance_usdt
+            await crud.close_trade(db_session, trade.id, current_price, net_profit)
+            await crud.create_transaction(db_session, trade.user_id, 'profit', net_profit, trade.id)
+            await crud.update_wallet_balance(db_session, trade.user_id, net_profit)
+            
+            await self.bot.send_message(
+                chat_id=trade.user_id,
+                text=f"""🎉 تم إغلاق الصفقة بنجاح!
+الرمز: {trade.symbol}
+سعر الخروج: {current_price:.2f} USDT
+الربح: {profit_usdt:.2f} USDT
+العمولة: {commission_amount:.2f} USDT
+صافي الربح المحول إلى محفظتك: {net_profit:.2f} USDT
+"""
+            )
 
-                    # 2. Execute the trade
-                    trade_result = await self.trade_executor.execute_order(signal['exchange'], signal['symbol'], 'market', 'buy', amount_to_trade)
-
-                    if trade_result:
-                        # 3. Record the trade
-                        trade_data = {
-                            'wallet_id': wallet.id,
-                            'symbol': signal['symbol'],
-                            'exchange': signal['exchange'],
-                            'entry_price': trade_result['price'],
-                            'amount': trade_result['amount'],
-                            'type': 'arbitrage',
-                            'is_demo': False
-                        }
-                        new_trade = await crud.create_trade(db_session, trade_data)
-
-                        # Wait and execute the sell side
-                        await asyncio.sleep(30) # Await a bit for the price to be ready on the other exchange
-                        
-                        sell_exchange = 'kucoin' if signal['exchange'] == 'binance' else 'binance'
-                        sell_price_data = await self.trade_executor.get_ticker_price(sell_exchange, signal['symbol'])
-                        exit_price = sell_price_data['ask']
-
-                        if exit_price > new_trade.entry_price:
-                            profit = (exit_price - new_trade.entry_price) * new_trade.amount
-                            await self.trade_executor.execute_order(sell_exchange, signal['symbol'], 'market', 'sell', new_trade.amount)
-                            await crud.close_trade(db_session, new_trade.id, exit_price, profit)
-                            await self.wallet_manager.distribute_profit(new_trade.id, user_id, profit, is_continuous=True)
-                            await self.bot.send_message(user_id, f"💰 تم إغلاق صفقة رابحة! الربح: {profit:.2f} USDT")
-                            await self.bot.send_message(settings.ADMIN_ID, f"🎉 صفقة مربحة للمستخدم {user_id}. الربح: {profit:.2f} USDT")
-
-            await asyncio.sleep(60) # Main loop sleep
-    
-    async def get_market_data(self):
-        """Simulates fetching real-time market data from exchanges."""
-        binance_ticker = await self.trade_executor.get_ticker_price('binance', 'BTC/USDT')
-        kucoin_ticker = await self.trade_executor.get_ticker_price('kucoin', 'BTC/USDT')
-
-        return {
-            'binance_price': binance_ticker.get('ask'),
-            'kucoin_price': kucoin_ticker.get('ask'),
-        }
+    def stop_continuous_trading(self, user_id: int):
+        if user_id in self.running_loops:
+            self.running_loops[user_id] = False
+            return True
+        return False
