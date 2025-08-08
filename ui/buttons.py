@@ -10,6 +10,8 @@ DEPOSIT_WITHDRAW = "إيداع/سحب"
 BACK_TO_MAIN = "القائمة الرئيسية"
 
 # Trading Buttons
+TRIAL_TRADE = "صفقة تجريبية"
+REAL_TRADE = "صفقة حقيقية"
 AUTO_TRADE = "تفعيل التداول المستمر"
 MANUAL_TRADE = "صفقة واحدة"
 
@@ -18,3 +20,4 @@ VIEW_USERS = "عرض المستخدمين"
 SEND_ANNOUNCEMENT = "إرسال إعلان"
 VIEW_TRADES = "عرض كل الصفقات"
 SWITCH_TO_USER = "وضع المستخدم"
+SETTINGS = "الإعدادات"
