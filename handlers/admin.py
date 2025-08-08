@@ -2,31 +2,24 @@
 
 from telegram import Update
 from telegram.ext import ContextTypes
-from db.database import async_session
-from db import crud
+from ui.menus import admin_main_menu, user_main_menu
 from core.config import settings
-from db.models import User
-from sqlalchemy.future import select
 
 async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /admin command and checks for admin permissions."""
+    """Displays the admin panel menu."""
     if update.effective_user.id != settings.ADMIN_ID:
-        await update.message.reply_text("عفواً، لا تملك صلاحيات الوصول إلى لوحة الإدارة.")
         return
-    
-    await update.message.reply_text("أهلاً بك أيها المدير! اختر أحد الخيارات من لوحة التحكم.")
+    await update.message.reply_text("أهلاً بك في لوحة تحكم الإدارة.", reply_markup=admin_main_menu)
 
 async def handle_view_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays a list of all registered users."""
+    """Placeholder for viewing users."""
     if update.effective_user.id != settings.ADMIN_ID:
         return
+    await update.message.reply_text("جاري عرض قائمة المستخدمين...")
+    # TODO: Implement database query to fetch and display users
 
-    async with async_session() as db_session:
-        users = await db_session.execute(select(User))
-        user_list = users.scalars().all()
-        
-        message = "قائمة المستخدمين:\n"
-        for user in user_list:
-            message += f"- ID: `{user.telegram_id}` | Username: `{user.username}` | Admin: `{user.is_admin}`\n"
-        
-        await update.message.reply_markdown(message)
+async def handle_switch_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allows the admin to switch to the regular user menu."""
+    if update.effective_user.id != settings.ADMIN_ID:
+        return
+    await update.message.reply_text("تم التبديل إلى وضع المستخدم العادي.", reply_markup=user_main_menu)
