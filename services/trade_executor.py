@@ -56,6 +56,19 @@ class TradeExecutor:
         balance = await client.fetch_balance()
         return balance[currency]
 
+    async def get_ticker_price(self, exchange: str, symbol: str):
+        """Fetches the bid/ask price for a symbol."""
+        client = self.clients.get(exchange)
+        if not client:
+            return None
+        
+        try:
+            ticker = await client.fetch_ticker(symbol)
+            return {'bid': ticker['bid'], 'ask': ticker['ask']}
+        except Exception as e:
+            print(f"Error fetching ticker for {symbol} on {exchange}: {e}")
+            return None
+
     async def close(self):
         """
         Closes all exchange connections.
