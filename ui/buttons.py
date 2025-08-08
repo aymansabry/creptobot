@@ -1,22 +1,20 @@
 # project_root/ui/buttons.py
 
-from telegram import KeyboardButton, InlineKeyboardButton
+from telegram import KeyboardButton
 
-START_TRADING = "🚀 بدء التداول"
-VIEW_BALANCE = "💰 عرض الرصيد"
-VIEW_PORTFOLIO = "📊 عرض المحفظة"
-VIEW_HISTORY = "📜 سجل الصفقات"
-HELP = "❓ مساعدة"
-STOP_TRADING = "🛑 إيقاف التداول"
-AUTO_TRADE = "🔁 تفعيل التداول المستمر"
-MANUAL_TRADE = "📝 صفقة واحدة"
-BACK_TO_MAIN = "🏠 العودة للقائمة الرئيسية"
+# User Buttons
+START_TRADING = "ابدأ التداول"
+VIEW_BALANCE = "عرض الرصيد"
+VIEW_HISTORY = "سجل الصفقات"
+DEPOSIT_WITHDRAW = "إيداع/سحب"
+BACK_TO_MAIN = "القائمة الرئيسية"
 
-VIEW_USERS = "👥 عرض المستخدمين"
-VIEW_PROFITS = "📈 عرض الأرباح"
-SET_FEES = "⚙️ تعديل نسبة البوت"
-TOGGLE_USER_TRADING = "🔄 إيقاف/تشغيل التداول"
-VIEW_ALL_TRADES = "🌐 عرض كل الصفقات"
+# Trading Buttons
+AUTO_TRADE = "تفعيل التداول المستمر"
+MANUAL_TRADE = "صفقة واحدة"
 
-CONFIRM_YES = InlineKeyboardButton("✅ تأكيد", callback_data="confirm_yes")
-CONFIRM_NO = InlineKeyboardButton("❌ إلغاء", callback_data="confirm_no")
+# Admin Buttons
+VIEW_USERS = "عرض المستخدمين"
+SEND_ANNOUNCEMENT = "إرسال إعلان"
+VIEW_TRADES = "عرض كل الصفقات"
+SWITCH_TO_USER = "وضع المستخدم"
