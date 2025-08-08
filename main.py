@@ -34,7 +34,7 @@ async def start_trading_tasks(application: Application):
 
 def main():
     """Starts the bot."""
-    application = Application.builder().token(settings.BOT_TOKEN).post_init(start_trading_tasks).build()
+    application = Application.builder().token(settings.BOT_TOKEN).pre_init(create_db_tables).post_init(start_trading_tasks).build()
     
     # --- Register Handlers ---
     # Common handlers
@@ -53,7 +53,7 @@ def main():
 
     # Run the bot
     logger.info("Bot started successfully.")
-    application.run_polling(drop_pending_updates=True, pre_init=create_db_tables)
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
