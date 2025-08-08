@@ -1,31 +1,33 @@
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
 def setup_user_handlers(application):
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CallbackQueryHandler(user_menu_handler, pattern="^user_"))
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db_session_factory = context.bot_data["db_session"]
+
+    # حفظ المستخدم في قاعدة البيانات إذا لم يكن موجودًا
+    from db.models import User
+    async with db_session_factory() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            session.add(User(id=user_id, balance=100, investment=0))
+            await session.commit()
+
     keyboard = [
-        [KeyboardButton("🚀 بدء التداول"), KeyboardButton("ℹ️ معلومات")],
-        [KeyboardButton("💼 محفظتي"), KeyboardButton("📊 الرصيد")]
+        [InlineKeyboardButton("📈 بدء التداول", callback_data="trade_start")],
+        [InlineKeyboardButton("💼 محفظتي", callback_data="trade_portfolio")],
+        [InlineKeyboardButton("💸 استثمار الآن", callback_data="trade_invest")],
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("مرحبًا بك في بوت التداول الذكي 👋\nاختر من القائمة:", reply_markup=reply_markup)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("👋 أهلاً بك في بوت التداول.\nاختر من القائمة:", reply_markup=reply_markup)
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    if text == "🚀 بدء التداول":
-        await update.message.reply_text("🟢 تم تفعيل التداول الفعلي لحسابك.")
-        # يمكنك هنا استدعاء التداول الحقيقي مثلاً:
-        # executor = context.bot_data["trade_executor"]
-        # await executor.execute_trade_for_user(user_id, ...)
-    elif text == "ℹ️ معلومات":
-        await update.message.reply_text("🤖 هذا بوت تداول آلي مدعوم بالذكاء الاصطناعي يعمل بشكل ذاتي بالكامل.")
-    elif text == "💼 محفظتي":
-        await update.message.reply_text("📁 يتم العمل على عرض بيانات محفظتك قريبًا.")
-    elif text == "📊 الرصيد":
-        await update.message.reply_text("💰 سيتم إظهار الرصيد الحقيقي لاحقًا.")
-    else:
-        await update.message.reply_text("❓ لم أفهم الأمر، الرجاء استخدام الأزرار.")
+    # هذا القسم لم يعد يُستخدم لأن الأزرار تدار من trade_handlers مباشرة.
+    await query.edit_message_text("❌ أمر غير معروف. يرجى استخدام الأزرار المتاحة.")
