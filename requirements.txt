@@ -6,3 +6,4 @@ ccxt
 python-dotenv
 openai
 pandas
+nest_asyncio
