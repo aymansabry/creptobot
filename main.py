@@ -1,6 +1,9 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
-import os
 from telegram.ext import Application
 from src.handlers import setup_handlers
 from src.db import init_db
