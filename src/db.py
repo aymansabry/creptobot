@@ -1,4 +1,4 @@
-# db.py
+# src/db.py
 
-def connect_db():
-    print("✅ Connected to database.")
+def init_db():
+    print("✅ تم تهيئة قاعدة البيانات")
