@@ -1,37 +1,39 @@
-import logging
 import asyncio
-import nest_asyncio
-from telegram.ext import Application
-from core.config import TELEGRAM_BOT_TOKEN
-from database.base import init_db
+import logging
+import os
+from telegram.ext import ApplicationBuilder
+from database import init_db  # ✅ تم التصحيح
 from handlers import setup_handlers
 
-logging.basicConfig(level=logging.INFO)
+# إعداد تسجيل الأحداث (الـ logs)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
+# جلب التوكن من متغير البيئة
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+if not TOKEN:
+    raise ValueError("❌ لم يتم ضبط متغير TELEGRAM_BOT_TOKEN في البيئة.")
+
+# الدالة الرئيسية
 async def main():
+    # إنشاء التطبيق
+    app = ApplicationBuilder().token(TOKEN).build()
+
     # تهيئة قاعدة البيانات
     await init_db()
-    print("\n✅ تم تهيئة قاعدة البيانات")
 
-    # إعداد البوت
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # إعداد الـ Handlers
+    # إعداد الهاندلرز (الأوامر، الأزرار، الخ)
     setup_handlers(app)
-    print("\n✅ تم إعداد الـ Handlers")
 
     logger.info("✅ البوت يعمل الآن...")
+
+    # تشغيل البوت
     await app.run_polling()
 
-
-if __name__ == '__main__':
-    try:
-        asyncio.get_event_loop().run_until_complete(main())
-    except RuntimeError as e:
-        if "This event loop is already running" in str(e):
-            nest_asyncio.apply()
-            asyncio.get_event_loop().run_until_complete(main())
-        else:
-            raise
+# تشغيل الدالة الرئيسية
+if __name__ == "__main__":
+    asyncio.run(main())
