@@ -9,16 +9,16 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(BigInteger, unique=True, index=True) # تم التعديل
+    user_id = Column(BigInteger, unique=True, index=True) 
     username = Column(String)
     wallets = relationship("Wallet", back_populates="user", uselist=False, cascade="all, delete-orphan")
     trades = relationship("Trade", back_populates="user")
     transactions = relationship("Transaction", back_populates="user")
-    
+
 class Wallet(Base):
     __tablename__ = "wallets"
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey("users.user_id"), unique=True) # تم التعديل
+    user_id = Column(BigInteger, ForeignKey("users.user_id"), unique=True)
     balance_usdt = Column(Float, default=0.0)
     is_continuous_trading = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -29,7 +29,7 @@ class Trade(Base):
     __tablename__ = "trades"
     id = Column(Integer, primary_key=True)
     wallet_id = Column(Integer, ForeignKey("wallets.id"))
-    user_id = Column(BigInteger, ForeignKey("users.user_id")) # تم التعديل
+    user_id = Column(BigInteger, ForeignKey("users.user_id"))
     symbol = Column(String)
     exchange = Column(String)
     type = Column(String) # 'spot', 'futures', 'arbitrage'
@@ -46,7 +46,7 @@ class Trade(Base):
 class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey("users.user_id")) # تم التعديل
+    user_id = Column(BigInteger, ForeignKey("users.user_id"))
     type = Column(String) # 'deposit', 'withdrawal', 'profit'
     amount = Column(Float)
     trade_id = Column(Integer, ForeignKey("trades.id"), nullable=True)
