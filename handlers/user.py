@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from db import crud
 from db.database import async_session
-from ui.menus import user_main_menu, trading_options_menu
+from ui.menus import trading_options_menu
 from services.trade_logic import TradeLogic
 from services.trade_executor import TradeExecutor
 from services.wallet_manager import WalletManager
@@ -20,7 +20,6 @@ trade_logic = None
 
 async def handle_start_trading(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the 'بدء التداول' button."""
-    # Initialization of trade_logic on first use
     global trade_logic
     if not trade_logic:
         trade_logic = TradeLogic(context.bot)
@@ -43,7 +42,6 @@ async def handle_auto_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await db_session.commit()
         await update.message.reply_text(MESSAGES['continuous_trading_activated'])
     
-    # Start the continuous trading loop for this specific user
     asyncio.create_task(trade_logic.continuous_trading_loop(user_id))
     
 async def handle_manual_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
