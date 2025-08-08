@@ -1,9 +1,0 @@
-python-telegram-bot==20.8
-sqlalchemy==2.0.23
-asyncpg
-aiohttp
-ccxt
-python-dotenv
-openai
-pandas
-nest_asyncio
