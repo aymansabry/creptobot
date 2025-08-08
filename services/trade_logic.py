@@ -4,16 +4,23 @@ import asyncio
 from db import crud
 from db.database import async_session
 from services.trade_executor import TradeExecutor
-import random
+from services.ai_engine import AIEngine
 from utils.constants import MESSAGES
+import random
 
 class TradeLogic:
     def __init__(self, bot):
         self.bot = bot
         self.trade_executor = TradeExecutor()
+        self.ai_engine = AIEngine()
         self.running_loops = {}
 
+    async def get_ai_trades(self, num_trades: int = 5):
+        """Fetches a list of AI-recommended trades from the AI engine."""
+        return await self.ai_engine.get_trade_recommendation(num_trades)
+
     async def continuous_trading_loop(self, user_id: int):
+        """Starts a continuous trading loop for a user based on AI recommendations."""
         if user_id in self.running_loops and self.running_loops[user_id]:
             return
 
@@ -35,9 +42,13 @@ class TradeLogic:
                     open_trade = await crud.get_open_trade(db_session, user_id)
                     
                     if not open_trade:
-                        await self.execute_single_trade(user_id)
-                        await asyncio.sleep(5)
-                        open_trade = await crud.get_open_trade(db_session, user_id)
+                        # Fetch new AI recommendations to select from
+                        recommendations = await self.ai_engine.get_trade_recommendation(user_id)
+                        if recommendations:
+                            selected_trade = random.choice(recommendations)
+                            await self.execute_single_trade(user_id, selected_trade)
+                            await asyncio.sleep(5)
+                            open_trade = await crud.get_open_trade(db_session, user_id)
 
                     if open_trade:
                         await self.monitor_and_close_trade(open_trade, db_session)
@@ -59,32 +70,40 @@ class TradeLogic:
                 text=MESSAGES['continuous_trading_deactivated']
             )
 
-    async def execute_single_trade(self, user_id: int):
+    async def execute_single_trade(self, user_id: int, trade_data: dict = None):
+        """
+        Executes a single trade. If trade_data is provided, it uses the AI recommendation.
+        Otherwise, it falls back to a default trade.
+        """
         async with async_session() as db_session:
             wallet = await crud.get_wallet_by_user_id(db_session, user_id)
             if not wallet or wallet.balance_usdt < 1.0:
                 return "insufficient_balance"
 
-            symbol = "BTC/USDT"
-            exchange = "binance"
-            trade_amount = wallet.balance_usdt * 0.95
-            
-            ticker = await self.trade_executor.get_ticker_price(exchange, symbol)
-            if not ticker:
-                await self.bot.send_message(chat_id=user_id, text=f"Error getting price for {symbol}.")
-                return "error"
-            
-            entry_price = ticker['ask']
-            
-            await self.trade_executor.execute_order(exchange, symbol, 'market', 'buy', trade_amount / entry_price)
-            
-            await crud.create_trade(db_session, user_id, symbol, exchange, 'spot', trade_amount, entry_price)
-            
-            await self.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ تم فتح صفقة جديدة:\nالرمز: {symbol}\nسعر الدخول: {entry_price:.2f} USDT"
-            )
-            return "success"
+            if trade_data:
+                symbol = trade_data['symbol']
+                exchange = trade_data['exchange']
+                trade_amount = wallet.balance_usdt * 0.95
+                
+                ticker = await self.trade_executor.get_ticker_price(exchange, symbol)
+                if not ticker:
+                    await self.bot.send_message(chat_id=user_id, text=f"Error getting price for {symbol}.")
+                    return "error"
+                
+                entry_price = ticker['ask']
+                
+                await self.trade_executor.execute_order(exchange, symbol, 'market', 'buy', trade_amount / entry_price)
+                
+                await crud.create_trade(db_session, user_id, symbol, exchange, 'spot', trade_amount, entry_price)
+                
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=f"✅ تم فتح صفقة جديدة:\nالرمز: {symbol}\nسعر الدخول: {entry_price:.2f} USDT"
+                )
+                return "success"
+            else:
+                # Fallback to a default trade if no AI recommendation is given
+                await self.execute_single_trade(user_id, {'symbol': "BTC/USDT", 'exchange': "binance"})
 
     async def monitor_and_close_trade(self, trade, db_session):
         current_ticker = await self.trade_executor.get_ticker_price(trade.exchange, trade.symbol)
@@ -92,9 +111,11 @@ class TradeLogic:
             return
 
         current_price = current_ticker['bid']
+        # This profit goal would be dynamically set by the AI recommendation
+        profit_goal = 1.0 # Placeholder
         profit_percentage = ((current_price - trade.entry_price) / trade.entry_price) * 100
         
-        if profit_percentage >= 1.0:
+        if profit_percentage >= profit_goal:
             profit_usdt = (current_price - trade.entry_price) * (trade.amount / trade.entry_price)
             commission_rate = 0.05
             commission_amount = profit_usdt * commission_rate
