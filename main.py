@@ -1,68 +1,107 @@
+# main.py
+
 import asyncio
 import logging
-from telegram.ext import ApplicationBuilder
+from telegram.ext import Application
 from utils.config_loader import ConfigLoader
-from db.database import init_db
-from core.ai import DecisionMaker
-from core.trading import TradeExecutor
-from handlers.admin_handlers import setup_admin_handlers
 from handlers.user_handlers import setup_user_handlers
 from handlers.trade_handlers import setup_trade_handlers
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from handlers.admin_handlers import setup_admin_handlers
+from ai_engine.decision_maker import DecisionMaker
+from core.exchange_api import ExchangeAPI
+from core.trade_executor import TradeExecutor
+from db.models import Base
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+import redis
 
+# إعداد التسجيل
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-
 logger = logging.getLogger(__name__)
 
 async def main():
     try:
+        # تحميل الإعدادات من متغيرات البيئة مباشرة
         config = ConfigLoader()
 
         # إعداد قاعدة البيانات
-        db_url = config.get("DATABASE_URL")
-        if not db_url:
-            raise ValueError("❌ DATABASE_URL is missing in environment variables.")
-        engine = create_async_engine(db_url, echo=False)
-        db_session = async_sessionmaker(engine, expire_on_commit=False)
-        await init_db(engine)
+        engine = create_async_engine(
+            config.get("database.url"),
+            echo=False,
+            pool_pre_ping=True
+        )
 
-        # إعداد بوت تيليجرام
-        token = config.get("TELEGRAM_BOT_TOKEN")
-        if not token:
-            raise ValueError("❌ TELEGRAM_BOT_TOKEN is missing in environment variables.")
-        application = ApplicationBuilder().token(token).build()
+        # إنشاء الجداول في حال لم تكن موجودة
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-        # إعداد الذكاء الاصطناعي والتنفيذ
-        binance_api_key = config.get("BINANCE_API_KEY")
-        binance_api_secret = config.get("BINANCE_API_SECRET")
-        main_wallet = config.get("TRADING_MAIN_WALLET_ADDRESS")
+        # جلسة قاعدة البيانات
+        AsyncSessionLocal = sessionmaker(
+            bind=engine,
+            class_=AsyncSession,
+            expire_on_commit=False
+        )
 
-        decision_maker = DecisionMaker(api_key=binance_api_key, api_secret=binance_api_secret)
-        trade_executor = TradeExecutor(api_key=binance_api_key, api_secret=binance_api_secret, main_wallet=main_wallet)
+        # Redis
+        redis_client = redis.from_url(config.get("redis.url"))
 
-        # تحميل معرفات الإدمن كقائمة
-        admin_ids_raw = config.get("TELEGRAM_ADMIN_IDS", "")
-        admin_ids = [int(uid.strip()) for uid in admin_ids_raw.split(",") if uid.strip().isdigit()]
+        # Binance API
+        binance_api = ExchangeAPI(
+            api_key=config.get("binance.api_key"),
+            api_secret=config.get("binance.api_secret"),
+            exchange_name="binance"
+        )
 
-        # تمرير البيانات للمعالجات
-        application.bot_data["decision_maker"] = decision_maker
-        application.bot_data["trade_executor"] = trade_executor
-        application.bot_data["db_session"] = db_session
-        application.bot_data["admin_ids"] = admin_ids
+        # AI Decision Engine
+        decision_maker = DecisionMaker(exchanges=["binance"])
 
-        # إعداد المعالجات
+        # منفذ الصفقات
+        trade_executor = TradeExecutor(binance_api=binance_api)
+
+        # بوت تيليجرام
+        application = Application.builder() \
+            .token(config.get("telegram.bot_token")) \
+            .concurrent_updates(True) \
+            .build()
+
+        # مشاركة البيانات بين المعالجات
+        application.bot_data.update({
+            "db_session": AsyncSessionLocal,
+            "redis_client": redis_client,
+            "decision_maker": decision_maker,
+            "trade_executor": trade_executor,
+            "admin_ids": config.get("telegram.admin_ids"),
+            "main_wallet_address": config.get("trading.main_wallet_address"),
+        })
+
+        # تسجيل المعالجات
         setup_user_handlers(application)
         setup_trade_handlers(application)
         setup_admin_handlers(application)
 
-        logger.info("✅ Bot started successfully.")
-        await application.run_polling()
+        logger.info("Starting the bot...")
+        await application.initialize()
+        await application.bot.delete_webhook()
+        await application.start()
+        await application.updater.start_polling()
+
+        # حلقة تشغيل دائمة
+        while True:
+            await asyncio.sleep(3600)
 
     except Exception as e:
-        logger.error(f"❌ Fatal error in main: {e}", exc_info=True)
+        logger.exception("Fatal error in main:")
+    finally:
+        if 'application' in locals():
+            try:
+                await application.stop()
+                await application.shutdown()
+            except RuntimeError as e:
+                logger.warning(f"Shutdown warning: {e}")
+        logger.info("Bot has been stopped")
 
 if __name__ == "__main__":
     asyncio.run(main())
