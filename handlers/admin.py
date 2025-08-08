@@ -25,8 +25,7 @@ async def handle_switch_to_user(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("تم التبديل إلى وضع المستخدم العادي.", reply_markup=user_main_menu)
 
 async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Placeholder for admin settings."""
+    """Provides instructions for how to modify settings."""
     if update.effective_user.id != settings.ADMIN_ID:
         return
-    await update.message.reply_text("أهلاً بك في صفحة الإعدادات. يمكنك هنا تعديل...", reply_markup=admin_main_menu)
-    # TODO: Implement the actual settings menu and logic
+    await update.message.reply_text("لإجراء تعديل على الإعدادات، يرجى إرسال الأمر بالصيغة التالية:\n\n`تغيير [اسم الإعداد] [القيمة الجديدة]`\n\nمثال: `تغيير عمولة_البوت 0.05`", reply_markup=admin_main_menu)
