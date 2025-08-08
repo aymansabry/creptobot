@@ -41,6 +41,8 @@ def main():
     
     # User handlers
     application.add_handler(MessageHandler(filters.Regex(START_TRADING), user.handle_start_trading))
+    application.add_handler(MessageHandler(filters.Regex(TRIAL_TRADE), user.handle_trial_trade))
+    application.add_handler(MessageHandler(filters.Regex(REAL_TRADE), user.handle_real_trade))
     application.add_handler(MessageHandler(filters.Regex(AUTO_TRADE), user.handle_auto_trade))
     application.add_handler(MessageHandler(filters.Regex(MANUAL_TRADE), user.handle_manual_trade))
     application.add_handler(MessageHandler(filters.Regex(VIEW_BALANCE), user.handle_view_balance))
@@ -48,12 +50,14 @@ def main():
     
     # Handlers for deposit/withdraw requests via text messages
     application.add_handler(MessageHandler(filters.Regex(r"^إيداع\s+\d+(\.\d+)?$"), user.handle_deposit_request))
+    application.add_handler(MessageHandler(filters.Regex("تم الإيداع"), user.handle_deposit_confirmation))
     application.add_handler(MessageHandler(filters.Regex(r"^سحب\s+\d+(\.\d+)?$"), user.handle_withdraw_request))
     
     # Admin handlers
     application.add_handler(CommandHandler("admin", admin.handle_admin_panel))
     application.add_handler(MessageHandler(filters.Regex(VIEW_USERS), admin.handle_view_users))
     application.add_handler(MessageHandler(filters.Regex(SWITCH_TO_USER), admin.handle_switch_to_user))
+    application.add_handler(MessageHandler(filters.Regex(SETTINGS), admin.handle_settings))
     
     # Run the bot
     logger.info("Bot started successfully.")
