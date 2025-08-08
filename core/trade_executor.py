@@ -1,19 +1,34 @@
+# core/trade_executor.py
+
 class TradeExecutor:
-    def __init__(self, binance_api, main_wallet=None):
+    def __init__(self, binance_api, main_wallet_address=None):
         self.binance_api = binance_api
-        self.main_wallet = main_wallet
+        self.main_wallet_address = main_wallet_address
+        self.active_users = set()
 
-    async def execute_trade(self, opportunity):
-        """
-        تنفيذ الصفقة بناءً على فرصة المراجحة المقدمة.
-        """
-        print(f"🔄 تنفيذ صفقة مراجحة:")
-        print(f"✅ شراء من: {opportunity['buy_from']} بسعر {opportunity['buy_price']}")
-        print(f"✅ بيع إلى: {opportunity['sell_to']} بسعر {opportunity['sell_price']}")
-        print(f"💼 المحفظة الرئيسية المستخدمة: {self.main_wallet}")
+    def enable_trading_for_user(self, user_id: int):
+        self.active_users.add(user_id)
 
-        # هنا من المفترض تنفيذ الأوامر الحقيقية باستخدام Binance API
-        # مثال:
-        # await self.binance_api.place_order(...)
+    def disable_trading_for_user(self, user_id: int):
+        self.active_users.discard(user_id)
 
-        pass
+    def is_user_active(self, user_id: int) -> bool:
+        return user_id in self.active_users
+
+    async def execute_trade_for_user(self, user_id: int):
+        if not self.is_user_active(user_id):
+            print(f"❌ المستخدم {user_id} غير مفعل للتداول.")
+            return
+
+        # تنفيذ الصفقة التجريبية أو الحقيقية
+        print(f"🚀 تنفيذ صفقة للمستخدم {user_id}")
+
+        # مثال وهمي - استبدله بالتنفيذ الحقيقي
+        trade_result = {
+            "status": "success",
+            "symbol": "BTC/USDT",
+            "amount": 0.01,
+            "price": 29000
+        }
+
+        return trade_result
