@@ -16,9 +16,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = await crud.get_user(db_session, user_id)
         if not user:
             user = await crud.create_user(db_session, user_id, username)
-            await crud.create_wallet(db_session, user.id, user.user_id)
+            await crud.create_wallet(db_session, user.user_id)
         
-        # Check if the user is the admin after they've been created/fetched
         if user_id == settings.ADMIN_ID:
             await update.message.reply_text("👋 أهلًا بك يا مدير! هذه لوحة تحكم الإدارة.", reply_markup=admin_main_menu)
         else:
