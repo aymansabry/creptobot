@@ -1,40 +1,33 @@
 import asyncio
-import os
 import logging
-from dotenv import load_dotenv
+import os
 from telegram.ext import Application
+from src.handlers import setup_handlers
+from src.db import init_db
 
-from core.logger import setup_logger
-from handlers.user import user_handlers
-from handlers.admin import admin_handlers
-from handlers.common import common_handlers
-
-# تحميل متغيرات البيئة من .env
-load_dotenv()
-
-# إعداد السجل
-setup_logger()
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 logger = logging.getLogger(__name__)
 
-
 async def main():
-    # تحميل التوكن من البيئة
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        logger.error("BOT_TOKEN غير موجود في متغيرات البيئة.")
-        return
+    await init_db()
 
-    # بناء التطبيق
-    app = Application.builder().token(token).build()
-
-    # تسجيل الهاندلرز
-    user_handlers(app)
-    admin_handlers(app)
-    common_handlers(app)
+    app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
+    setup_handlers(app)
 
     logger.info("✅ البوت يعمل الآن...")
     await app.run_polling()
 
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(main())
+        else:
+            loop.run_until_complete(main())
+    except RuntimeError:
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        new_loop.run_until_complete(main())
