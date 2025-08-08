@@ -1,21 +1,36 @@
 # project_root/main.py
 
 import logging
+import asyncio
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from core.config import settings
 from handlers import user, admin, common
 from ui.buttons import *
-from db.database import engine, Base
+from db.database import engine, async_session
+from db.models import Base, Wallet
+from sqlalchemy.future import select
+from services.trade_logic import TradeLogic
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-async def create_db_tables():
+async def create_db_tables(application: Application):
     """Create database tables if they don't exist."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+async def start_trading_tasks(application: Application):
+    """Starts continuous trading loops for users who have it enabled."""
+    trade_logic = TradeLogic(application.bot)
+    async with async_session() as db_session:
+        # Find all users with continuous trading enabled
+        result = await db_session.execute(select(Wallet).filter(Wallet.is_continuous_trading == True))
+        wallets = result.scalars().all()
+        for wallet in wallets:
+            # Start a new task for each user
+            asyncio.create_task(trade_logic.continuous_trading_loop(wallet.user_id))
 
 def main():
     """Starts the bot."""
@@ -38,9 +53,9 @@ def main():
 
     # Run the bot
     logger.info("Bot started successfully.")
-    # We create tables before running the bot
     application.run_polling(drop_pending_updates=True,
-                            pre_init=create_db_tables)
+                            pre_init=create_db_tables,
+                            post_init=start_trading_tasks)
 
 if __name__ == '__main__':
     main()
