@@ -21,17 +21,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main():
-    application = None
     try:
         # تحميل الإعدادات
         config = ConfigLoader()
 
         # إعداد قاعدة البيانات
-        db_url = config.get('database.url')
-        if not db_url:
-            raise ValueError("❌ لم يتم العثور على رابط قاعدة البيانات في الإعدادات.")
+        database_url = config.get('database.url')
+        if not database_url:
+            raise ValueError("❌ لم يتم العثور على database.url في ملف الإعدادات.")
+
         engine = create_async_engine(
-            db_url,
+            database_url,
             echo=False,
             pool_size=20,
             max_overflow=10,
@@ -42,36 +42,35 @@ async def main():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        # جلسة قاعدة البيانات
+        # إعداد جلسة قاعدة البيانات
         AsyncSessionLocal = sessionmaker(
             bind=engine,
             expire_on_commit=False,
             class_=AsyncSession
         )
 
-        # Redis
+        # إعداد Redis
         redis_url = config.get('redis.url')
+        if not redis_url:
+            raise ValueError("❌ لم يتم العثور على redis.url في ملف الإعدادات.")
         redis_client = redis.from_url(redis_url)
 
-        # إعداد واجهة Binance
+        # إعداد API التبادل
         binance_api = ExchangeAPI(
             api_key=config.get('binance.api_key'),
             api_secret=config.get('binance.api_secret'),
             exchange_name='binance'
         )
 
-        # محرك القرارات
+        # إعداد محرك الذكاء
         decision_maker = DecisionMaker(exchanges=['binance'])
 
-        # منفذ التداول
+        # إعداد منفذ الصفقات
         trade_executor = TradeExecutor(binance_api=binance_api)
 
-        # بوت تليجرام
-        bot_token = config.get('telegram.bot_token')
-        if not bot_token:
-            raise ValueError("❌ لم يتم العثور على توكن بوت التليجرام.")
+        # إنشاء التطبيق
         application = Application.builder() \
-            .token(bot_token) \
+            .token(config.get('telegram.bot_token')) \
             .concurrent_updates(True) \
             .build()
 
@@ -90,27 +89,24 @@ async def main():
         setup_trade_handlers(application)
         setup_admin_handlers(application)
 
-        # بدء التشغيل
-        logger.info("🚀 Starting the bot...")
+        # بدء البوت
+        logger.info("✅ Bot is starting...")
         await application.initialize()
         await application.bot.delete_webhook()
         await application.start()
         await application.updater.start_polling()
 
-        # البقاء في التشغيل
         while True:
             await asyncio.sleep(3600)
 
     except Exception as e:
         logger.exception("❌ Fatal error in main:")
     finally:
-        if application:
-            try:
+        if 'application' in locals():
+            if application.running:
                 await application.stop()
                 await application.shutdown()
-            except RuntimeError as e:
-                logger.warning(f"⚠️ Shutdown issue: {e}")
-        logger.info("✅ Bot has been stopped.")
+        logger.info("🛑 Bot has been stopped")
 
 if __name__ == '__main__':
     asyncio.run(main())
