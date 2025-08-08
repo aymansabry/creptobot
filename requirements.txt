@@ -1,0 +1,7 @@
+python-telegram-bot
+pydantic-settings
+SQLAlchemy
+asyncpg
+ccxt
+pandas
+openai
