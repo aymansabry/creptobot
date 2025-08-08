@@ -1,13 +1,14 @@
+import os
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
-ADMIN_IDS = [123456789]  # ضع معرفك هنا
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in ADMIN_IDS:
-        await update.message.reply_text("🔒 مرحباً أيها المدير.")
-    else:
-        await update.message.reply_text("🚫 ليس لديك صلاحية.")
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحيات الوصول إلى لوحة التحكم.")
+        return
+
+    await update.message.reply_text("✅ مرحبًا بك في لوحة تحكم الأدمن.\n- تحت التطوير")
 
 admin_handler = CommandHandler("admin", admin)
