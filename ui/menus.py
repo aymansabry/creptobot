@@ -24,9 +24,20 @@ trading_options_menu = ReplyKeyboardMarkup(
 
 admin_main_menu = ReplyKeyboardMarkup(
     [
-        [KeyboardButton(VIEW_USERS)],
+        [KeyboardButton(VIEW_USERS), KeyboardButton(SETTINGS)],
         [KeyboardButton(SEND_ANNOUNCEMENT), KeyboardButton(VIEW_TRADES)],
         [KeyboardButton(SWITCH_TO_USER)]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False
+)
+
+# New menu for selecting trial or real trading
+trade_type_menu = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton(TRIAL_TRADE)],
+        [KeyboardButton(REAL_TRADE)],
+        [KeyboardButton(BACK_TO_MAIN)]
     ],
     resize_keyboard=True,
     one_time_keyboard=False
