@@ -26,9 +26,9 @@ async def get_wallet_by_user_id(db_session: AsyncSession, user_id: int):
     )
     return result.scalars().first()
     
-async def create_wallet(db_session: AsyncSession, user_pk: int, user_id: int):
+async def create_wallet(db_session: AsyncSession, user_id: int):
     """Creates a new wallet for a user."""
-    wallet = models.Wallet(user_id=user_id, user_pk=user_pk) # Assuming 'user_pk' exists to link to the User's primary key
+    wallet = models.Wallet(user_id=user_id)
     db_session.add(wallet)
     await db_session.commit()
     await db_session.refresh(wallet)
