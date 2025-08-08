@@ -43,7 +43,7 @@ async def handle_real_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not trade_logic:
         trade_logic = TradeLogic(context.bot)
 
-    trades = await trade_logic.get_ai_trades(num_trades=5)
+    trades = await trade_logic.get_ai_trades()
     
     if not trades:
         await update.message.reply_text("عذراً، لم أتمكن من توليد صفقات في الوقت الحالي. يرجى المحاولة لاحقاً.")
@@ -100,7 +100,7 @@ async def handle_manual_trade(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handles the 'صفقة واحدة' button."""
     user_id = update.effective_user.id
     
-    recommendations = await trade_logic.get_ai_trades(num_trades=1)
+    recommendations = await trade_logic.get_ai_trades()
     if not recommendations:
         await update.message.reply_text("عذراً، لم أتمكن من توليد صفقة في الوقت الحالي. يرجى المحاولة لاحقاً.")
         return
