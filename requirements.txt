@@ -1,5 +1,0 @@
-python-telegram-bot==20.8
-sqlalchemy
-asyncpg
-python-dotenv
-nest_asyncio
