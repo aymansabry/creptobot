@@ -15,7 +15,6 @@ import asyncio
 trade_executor = TradeExecutor()
 wallet_manager = WalletManager()
 
-# This part needs to be initialized with the bot instance
 trade_logic = None
 
 async def handle_start_trading(update: Update, context: ContextTypes.DEFAULT_TYPE):
