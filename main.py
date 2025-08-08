@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-async def create_db_tables(application: Application):
+async def create_db_tables():
     """Create database tables if they don't exist."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -34,7 +34,8 @@ async def start_trading_tasks(application: Application):
 
 def main():
     """Starts the bot."""
-    application = Application.builder().token(settings.BOT_TOKEN).pre_init(create_db_tables).post_init(start_trading_tasks).build()
+    # Build the application with a post_init function to start trading loops
+    application = Application.builder().token(settings.BOT_TOKEN).post_init(start_trading_tasks).build()
     
     # --- Register Handlers ---
     # Common handlers
@@ -50,6 +51,13 @@ def main():
     # Admin handlers
     application.add_handler(CommandHandler("admin", admin.handle_admin_panel))
     application.add_handler(MessageHandler(filters.Regex(VIEW_USERS), admin.handle_view_users))
+
+    # Run the database table creation task before starting the bot
+    try:
+        asyncio.run(create_db_tables())
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {e}")
+        return
 
     # Run the bot
     logger.info("Bot started successfully.")
