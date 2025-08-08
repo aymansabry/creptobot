@@ -10,3 +10,4 @@ def setup_handlers(app):
     app.add_handler(balance_handler)
     app.add_handler(portfolio_handler)
     app.add_handler(trade_handler)
+    application.add_handler(menu_handler)  # ✅ أضف هذا السطر
