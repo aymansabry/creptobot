@@ -8,20 +8,15 @@ import re
 
 class AIEngine:
     def __init__(self):
-        # Set the OpenAI API key directly from settings
         openai.api_key = settings.OPENAI_API_KEY
         self.model = "gpt-3.5-turbo" # Can be updated to gpt-4 if you have access
 
-    async def get_trade_recommendation(self, user_id: int):
+    async def get_trade_recommendation(self):
         """
         Generates a list of AI-powered trade recommendations using ChatGPT.
         The output is a structured JSON array for easy parsing.
         """
-        # A list of symbols and exchanges to choose from
-        symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
-        exchanges = ["binance", "kucoin"]
-
-        # Prompt the AI to generate structured, dynamic recommendations
+        
         prompt = (
             "You are an AI-powered crypto trading assistant. Generate a list of 5 unique trading recommendations "
             "for a user. For each recommendation, provide the following structured data as a JSON array:\n"
