@@ -8,7 +8,6 @@ from ui.menus import user_main_menu, admin_main_menu
 from core.config import settings
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends a message with a menu on `/start` and returns to main menu."""
     user_id = update.effective_user.id
     username = update.effective_user.username
     
