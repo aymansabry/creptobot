@@ -1,109 +1,64 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
-from db.models import User
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from db.session import get_session
-from core.config import MIN_INVESTMENT_USDT
+from db.models import User
 
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    username = update.effective_user.username
+# استدعاء جلسة قاعدة البيانات
+def get_user(session, telegram_id: str):
+    return session.query(User).filter_by(telegram_id=telegram_id).first()
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    username = update.effective_user.username or ""
 
     session = get_session()
-    user = session.query(User).filter_by(telegram_id=str(user_id)).first()
+    user = get_user(session, user_id)
     if not user:
-        user = User(telegram_id=str(user_id), username=username)
-        session.add(user)
+        # تسجيل مستخدم جديد
+        new_user = User(telegram_id=user_id, username=username)
+        session.add(new_user)
         session.commit()
-        session.refresh(user)
-    session.close()
 
+    # عرض قائمة (يمكن تعديلها حسب حاجتك)
     keyboard = [
-        [InlineKeyboardButton("بدء الاستثمار", callback_data="start_investment")],
-        [InlineKeyboardButton("التداول التجريبي", callback_data="start_demo")],
-        [InlineKeyboardButton("عرض الأرباح التجريبية", callback_data="demo_profit")],
-        [InlineKeyboardButton("معلومات حسابي", callback_data="account_info")],
+        [InlineKeyboardButton("بدء الاستثمار", callback_data="start_invest")],
+        [InlineKeyboardButton("الحسابات", callback_data="accounts")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        f"مرحباً {username}!\nاختر خياراً من القائمة:",
-        reply_markup=reply_markup,
-    )
+
+    await update.message.reply_text("مرحباً! اختر ما تريد:", reply_markup=reply_markup)
+    session.close()
+
+start_handler = CommandHandler("start", start)
 
 async def handle_user_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = query.from_user.id
 
-    session = get_session()
-    user = session.query(User).filter_by(telegram_id=str(user_id)).first()
-    if not user:
-        await query.message.reply_text("خطأ: المستخدم غير مسجل.")
-        session.close()
-        return
+    data = query.data
+    if data == "start_invest":
+        await query.edit_message_text("أدخل مبلغ الاستثمار (مثلاً: 10):")
+        context.user_data["awaiting_amount"] = True
+    elif data == "accounts":
+        await query.edit_message_text("هنا صفحة الحسابات (قيد التطوير).")
 
-    if query.data == "start_investment":
-        await query.message.reply_text(f"يرجى إدخال مبلغ الاستثمار (≥ {MIN_INVESTMENT_USDT} USDT):")
-        context.user_data['awaiting_investment_amount'] = True
-
-    elif query.data == "start_demo":
-        user.trading_mode = "demo"
-        user.wallet_balance = 1000.0
-        user.profit_earned = 0.0
-        session.commit()
-        await query.message.reply_text("تم تفعيل التداول التجريبي. رصيدك التجريبي 1000 USDT.")
-
-    elif query.data == "demo_profit":
-        profit_increment = user.wallet_balance * 0.005  # 0.5% أرباح تجريبية
-        user.profit_earned += profit_increment
-        session.commit()
-        await query.message.reply_text(f"أرباحك التجريبية الحالية: {user.profit_earned:.2f} USDT")
-
-    elif query.data == "account_info":
-        await query.message.reply_text(
-            f"حسابك:\n"
-            f"نوع التداول: {user.trading_mode}\n"
-            f"رصيد المحفظة: {user.wallet_balance:.2f} USDT\n"
-            f"الأرباح المتراكمة: {user.profit_earned:.2f} USDT\n"
-            f"الحساب نشط: {'نعم' if user.active else 'لا'}"
-        )
-    session.close()
+handle_user_selection = CallbackQueryHandler(handle_user_selection)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    session = get_session()
-    user = session.query(User).filter_by(telegram_id=str(user_id)).first()
-    if not user:
-        await update.message.reply_text("خطأ: المستخدم غير مسجل.")
-        session.close()
-        return
-
-    if context.user_data.get('awaiting_investment_amount'):
+    if context.user_data.get("awaiting_amount"):
+        amount_text = update.message.text
         try:
-            amount = float(update.message.text)
-            if amount < MIN_INVESTMENT_USDT:
-                await update.message.reply_text(f"المبلغ يجب أن يكون على الأقل {MIN_INVESTMENT_USDT} USDT.")
-                session.close()
+            amount = float(amount_text)
+            if amount < 1:
+                await update.message.reply_text("المبلغ يجب أن يكون 1 USDT على الأقل.")
                 return
-
-            if user.wallet_balance < amount:
-                await update.message.reply_text("رصيد المحفظة غير كافٍ للاستثمار بالمبلغ المطلوب.")
-                session.close()
-                return
-
-            user.investment_amount = amount
-            user.wallet_balance -= amount
-            user.trading_mode = "real"
-
-            session.commit()
-            await update.message.reply_text(
-                f"تم تسجيل مبلغ الاستثمار: {amount} USDT.\nرصيد محفظتك الحالي: {user.wallet_balance:.2f} USDT.\nيمكنك الآن بدء التداول الحقيقي."
-            )
-            context.user_data['awaiting_investment_amount'] = False
+            # تخزين المبلغ للمستخدم (يمكن تعديلها لتخزين في DB)
+            context.user_data["investment_amount"] = amount
+            context.user_data["awaiting_amount"] = False
+            await update.message.reply_text(f"تم تحديد مبلغ الاستثمار: {amount} USDT")
         except ValueError:
-            await update.message.reply_text("يرجى إدخال رقم صالح للمبلغ.")
-    session.close()
+            await update.message.reply_text("الرجاء إدخال رقم صحيح.")
+    else:
+        await update.message.reply_text("استخدم القائمة لبدء الاستثمار.")
+
+text_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler)
