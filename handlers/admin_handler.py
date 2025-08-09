@@ -1,11 +1,17 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from db.models import User
+from db.session import get_session
 
 async def admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user = context.bot_data.get(f"user_{user_id}")
+
+    session = get_session()
+    user = session.query(User).filter_by(telegram_id=str(user_id)).first()
+
     if not user or not user.is_admin:
         await update.message.reply_text("عذراً، ليس لديك صلاحية الدخول كمدير.")
+        session.close()
         return
 
     keyboard = [
@@ -15,3 +21,4 @@ async def admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("لوحة تحكم المدير:", reply_markup=reply_markup)
+    session.close()
