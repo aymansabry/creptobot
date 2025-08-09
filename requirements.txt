@@ -5,3 +5,4 @@ psycopg2-binary
 python-dotenv
 cryptography
 openai
+asyncpg  # Add this line
