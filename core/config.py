@@ -1,4 +1,3 @@
-# project_root/core/config.py (Modified)
 from dotenv import load_dotenv
 import os
 
@@ -18,6 +17,6 @@ if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError('TELEGRAM_BOT_TOKEN is required in .env file.')
 if not DATABASE_URL:
     raise RuntimeError('DATABASE_URL is required in .env file.')
-# The following lines have been commented out to disable the key check:
+# تم إلغاء السطر الذي كان يتسبب في الخطأ
 # if not ENCRYPTION_KEY:
 #     raise RuntimeError('ENCRYPTION_KEY is required in .env file. Use `from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())` to generate one.')
