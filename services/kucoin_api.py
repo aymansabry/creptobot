@@ -1,58 +1,25 @@
-import time
-import hashlib
-import hmac
-import base64
-import requests
-from core.config import KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE
+from utils.encryption import EncryptionService
 
-BASE_URL = "https://api.kucoin.com"
+class ExchangeAPIManager:
+    def __init__(self, user):
+        self.exchanges = {}
+        enc = EncryptionService()
 
-class KuCoinAPI:
-    def __init__(self):
-        self.api_key = KUCOIN_API_KEY
-        self.api_secret = KUCOIN_API_SECRET
-        self.api_passphrase = KUCOIN_API_PASSPHRASE
+        if user.encrypted_binance_api_key and user.encrypted_binance_api_secret:
+            from services.binance_api import BinanceAPI
+            binance_api_key = enc.decrypt(user.encrypted_binance_api_key)
+            binance_api_secret = enc.decrypt(user.encrypted_binance_api_secret)
+            self.exchanges["binance"] = BinanceAPI(binance_api_key, binance_api_secret)
 
-    def _sign(self, method, endpoint, body="", timestamp=""):
-        str_to_sign = f"{timestamp}{method}{endpoint}{body}"
-        signature = base64.b64encode(hmac.new(
-            self.api_secret.encode(),
-            str_to_sign.encode(),
-            hashlib.sha256).digest())
-        return signature.decode()
+        if user.encrypted_kucoin_api_key and user.encrypted_kucoin_api_secret and user.encrypted_kucoin_api_passphrase:
+            from services.kucoin_api import KuCoinAPI
+            kucoin_api_key = enc.decrypt(user.encrypted_kucoin_api_key)
+            kucoin_api_secret = enc.decrypt(user.encrypted_kucoin_api_secret)
+            kucoin_api_passphrase = enc.decrypt(user.encrypted_kucoin_api_passphrase)
+            self.exchanges["kucoin"] = KuCoinAPI(kucoin_api_key, kucoin_api_secret, kucoin_api_passphrase)
 
-    def _headers(self, method, endpoint, body=""):
-        timestamp = str(int(time.time() * 1000))
-        signature = self._sign(method, endpoint, body, timestamp)
-        return {
-            "KC-API-KEY": self.api_key,
-            "KC-API-SIGN": signature,
-            "KC-API-TIMESTAMP": timestamp,
-            "KC-API-PASSPHRASE": self.api_passphrase,
-            "KC-API-KEY-VERSION": "2",
-            "Content-Type": "application/json"
-        }
+    def get_exchange(self, name):
+        return self.exchanges.get(name)
 
-    def get_account(self):
-        endpoint = "/api/v1/accounts"
-        headers = self._headers("GET", endpoint)
-        url = f"{BASE_URL}{endpoint}"
-        resp = requests.get(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-    def place_order(self, symbol, side, size, order_type="market"):
-        endpoint = "/api/v1/orders"
-        import json
-        body = {
-            "symbol": symbol,
-            "side": side,
-            "type": order_type,
-            "size": size
-        }
-        body_json = json.dumps(body)
-        headers = self._headers("POST", endpoint, body_json)
-        url = f"{BASE_URL}{endpoint}"
-        resp = requests.post(url, headers=headers, data=body_json)
-        resp.raise_for_status()
-        return resp.json()
+    def list_active_exchanges(self):
+        return list(self.exchanges.keys())
