@@ -17,6 +17,6 @@ if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError('TELEGRAM_BOT_TOKEN is required in .env file.')
 if not DATABASE_URL:
     raise RuntimeError('DATABASE_URL is required in .env file.')
-# تم إلغاء السطر الذي كان يتسبب في الخطأ
+# تم إلغاء السطر الذي كان يسبب الخطأ
 # if not ENCRYPTION_KEY:
 #     raise RuntimeError('ENCRYPTION_KEY is required in .env file. Use `from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())` to generate one.')
