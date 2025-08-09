@@ -9,6 +9,7 @@ from sqlalchemy import select, insert, update
 from core.config import ADMIN_TELEGRAM_ID
 from core.logger import get_logger
 # from core.security import encrypt_text  # تم إزالة هذا السطر
+from aiogram.filters import Command
 
 logger = get_logger('telegram_handlers')
 
@@ -17,7 +18,7 @@ class AddApiKeys(StatesGroup):
     waiting_for_secret = State()
 
 def setup_handlers(router):
-    @router.message(commands=['start'])
+    @router.message(Command('start'))
     async def start_cmd(message: Message, state: FSMContext, session: Session = next(get_session())):
         user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
         if not user:
