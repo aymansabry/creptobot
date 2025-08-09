@@ -1,3 +1,5 @@
+# project_root/exchanges/__init__.py
+
 from .base import ExchangeWrapper
 import ccxt.pro as ccxt
 
