@@ -1,5 +1,5 @@
-aiogram==3.0.0
-ccxt==4.0.0
+aiogram
+ccxt
 sqlalchemy==2.0.22
 psycopg2-binary
 python-dotenv
