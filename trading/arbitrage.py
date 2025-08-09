@@ -6,7 +6,7 @@ from db.database import get_session_sync
 from db import models
 from trading.utils import calc_profit
 from exchanges import build_exchange
-from core.security import decrypt_text
+# from core.security import decrypt_text  # تم إزالة هذا السطر
 from sqlalchemy.orm import Session
 from sqlalchemy import select, update
 
@@ -37,9 +37,9 @@ async def find_and_execute_trades(session: Session, user: models.User, testnet: 
         if cfg.get('enabled'):
             try:
                 cred = {
-                    'apiKey': decrypt_text(cfg.get('apiKey')),
-                    'secret': decrypt_text(cfg.get('secret')),
-                    'password': decrypt_text(cfg.get('password'))
+                    'apiKey': cfg.get('apiKey'),    # تم التعديل
+                    'secret': cfg.get('secret'),    # تم التعديل
+                    'password': cfg.get('password') # تم التعديل
                 }
                 tasks.append(build_exchange(ex_name, cred))
             except Exception as e:
