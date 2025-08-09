@@ -8,15 +8,14 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String, unique=True, nullable=False)
     username = Column(String)
-    is_admin = Column(Boolean, default=False)    # صلاحية المدير
+    is_admin = Column(Boolean, default=False)
     investment_amount = Column(Float, default=0.0)
-    wallet_balance = Column(Float, default=0.0)  # رصيد المحفظة (محفظة وهمية أو حقيقية)
+    wallet_balance = Column(Float, default=0.0)
     trading_mode = Column(String, default="demo")  # demo أو real
     active = Column(Boolean, default=True)
-    profit_earned = Column(Float, default=0.0)   # أرباح تراكمية
+    profit_earned = Column(Float, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # علاقات إذا تحتاجها
     wallets = relationship("Wallet", back_populates="user")
     trades = relationship("Trade", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
