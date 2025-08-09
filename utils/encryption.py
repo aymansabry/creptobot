@@ -1,19 +1,12 @@
 from cryptography.fernet import Fernet
-from core.config import ENCRYPTION_KEY, ENCRYPTION_ENABLED
+from core.config import ENCRYPTION_KEY
 
 class EncryptionService:
     def __init__(self):
-        if ENCRYPTION_ENABLED and ENCRYPTION_KEY:
-            self.cipher = Fernet(ENCRYPTION_KEY.encode())
-        else:
-            self.cipher = None
+        self.cipher = Fernet(ENCRYPTION_KEY.encode())
 
     def encrypt(self, data: str) -> str:
-        if self.cipher:
-            return self.cipher.encrypt(data.encode()).decode()
-        return data
+        return self.cipher.encrypt(data.encode()).decode()
 
     def decrypt(self, data: str) -> str:
-        if self.cipher:
-            return self.cipher.decrypt(data.encode()).decode()
-        return data
+        return self.cipher.decrypt(data.encode()).decode()
