@@ -24,7 +24,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("بدء الاستثمار", callback_data="start_investment")],
         [InlineKeyboardButton("التداول التجريبي", callback_data="start_demo")],
-        [InlineKeyboardButton("حساب الأرباح التجريبية", callback_data="demo_profit")],
+        [InlineKeyboardButton("عرض الأرباح التجريبية", callback_data="demo_profit")],
         [InlineKeyboardButton("معلومات حسابي", callback_data="account_info")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -54,10 +54,10 @@ async def handle_user_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user.wallet_balance = 1000.0
         user.profit_earned = 0.0
         session.commit()
-        await query.message.reply_text("تم تفعيل التداول التجريبي. رصيدك التجريبي 1000 USDT. يمكنك متابعة الأرباح بدون مخاطرة.")
+        await query.message.reply_text("تم تفعيل التداول التجريبي. رصيدك التجريبي 1000 USDT.")
 
     elif query.data == "demo_profit":
-        profit_increment = user.wallet_balance * 0.005
+        profit_increment = user.wallet_balance * 0.005  # 0.5% أرباح تجريبية
         user.profit_earned += profit_increment
         session.commit()
         await query.message.reply_text(f"أرباحك التجريبية الحالية: {user.profit_earned:.2f} USDT")
