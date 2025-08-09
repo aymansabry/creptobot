@@ -1,0 +1,21 @@
+<!--  -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Users</title></head>
+<body>
+  <h1>المستخدمون</h1>
+  <table>
+    <tr><th>ID</th><th>Username</th><th>Invested</th><th>Active</th><th>Action</th></tr>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.id }}</td>
+      <td>{{ u.username }}</td>
+      <td>{{ u.invested_amount }}</td>
+      <td>{{ 'نشط' if u.is_active else 'موقوف' }}</td>
+      <td><a href="{{ url_for('toggle_user', user_id=u.id) }}">تبديل الحالة</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <a href="{{ url_for('index') }}">عودة</a>
+</body>
+</html>
