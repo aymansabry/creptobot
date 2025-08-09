@@ -1,19 +1,21 @@
-import os
-from telegram.ext import Application
-from handlers.user_handler import start_handler, handle_user_selection, text_handler
+import logging
+from telegram.ext import ApplicationBuilder
+from handlers.user_handler import start_handler
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+from db import init_db
+
+logging.basicConfig(level=logging.INFO)
 
 def main():
-    application = Application.builder().token(BOT_TOKEN).build()
+    # إنشاء الجداول إذا لم تكن موجودة
+    init_db()
 
-    # إضافة الـ handlers
-    application.add_handler(start_handler)
-    application.add_handler(handle_user_selection)
-    application.add_handler(text_handler)
+    app = ApplicationBuilder().token("YOUR_TELEGRAM_BOT_TOKEN").build()
 
-    # تشغيل البوت بنظام Polling
-    application.run_polling()
+    app.add_handler(start_handler)
+
+    print("Bot started...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
