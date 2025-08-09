@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, insert, update
 from core.config import ADMIN_TELEGRAM_ID
 from core.logger import get_logger
-from core.security import encrypt_text
+# from core.security import encrypt_text  # تم إزالة هذا السطر
 
 logger = get_logger('telegram_handlers')
 
@@ -112,15 +112,16 @@ def setup_handlers(router):
             await state.clear()
             return
         
-        encrypted_api_key = encrypt_text(api_key)
-        encrypted_secret = encrypt_text(secret)
+        # تم إزالة أسطر التشفير
+        # encrypted_api_key = encrypt_text(api_key)
+        # encrypted_secret = encrypt_text(secret)
         
         if user.api_exchange is None:
             user.api_exchange = {}
         
         user.api_exchange[exchange_name] = {
-            'apiKey': encrypted_api_key,
-            'secret': encrypted_secret,
+            'apiKey': api_key,  # تم التعديل لتخزين المفتاح الخام
+            'secret': secret,   # تم التعديل لتخزين المفتاح الخام
             'enabled': True
         }
         
