@@ -1,0 +1,8 @@
+python-telegram-bot==20.3
+psycopg2-binary==2.9.6
+SQLAlchemy==2.0.19
+requests==2.31.0
+python-dotenv==1.0.0
+cryptography==41.0.3
+openai==0.27.8
+websockets==11.0.3
