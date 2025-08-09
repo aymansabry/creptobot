@@ -1,3 +1,4 @@
+#db/migrations.sql
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     telegram_id VARCHAR(255) UNIQUE NOT NULL,
