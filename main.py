@@ -1,20 +1,19 @@
-import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from core.config import BOT_TOKEN
+import os
+from telegram.ext import Application
 from handlers.user_handler import start_handler, handle_user_selection, text_handler
-from handlers.admin_handler import admin_handler
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+def main():
+    application = Application.builder().token(BOT_TOKEN).build()
 
-app.add_handler(CommandHandler("start", start_handler))
-app.add_handler(CallbackQueryHandler(handle_user_selection))
-app.add_handler(CommandHandler("admin", admin_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    # إضافة الـ handlers
+    application.add_handler(start_handler)
+    application.add_handler(handle_user_selection)
+    application.add_handler(text_handler)
+
+    # تشغيل البوت بنظام Polling
+    application.run_polling()
 
 if __name__ == "__main__":
-    app.run_polling()
+    main()
