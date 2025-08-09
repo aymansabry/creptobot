@@ -1,4 +1,4 @@
-#db/iniy.py
+#db/init.py
 from .models import Base
 from .session import engine
 
