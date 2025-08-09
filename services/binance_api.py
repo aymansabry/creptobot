@@ -2,14 +2,13 @@ import hmac
 import hashlib
 import time
 import requests
-from core.config import BINANCE_API_KEY, BINANCE_API_SECRET
 
 BASE_URL = "https://api.binance.com"
 
 class BinanceAPI:
-    def __init__(self):
-        self.api_key = BINANCE_API_KEY
-        self.api_secret = BINANCE_API_SECRET
+    def __init__(self, api_key, api_secret):
+        self.api_key = api_key
+        self.api_secret = api_secret
 
     def _sign(self, params):
         query_string = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
@@ -25,9 +24,6 @@ class BinanceAPI:
         resp = requests.get(url, headers=headers, params=params)
         resp.raise_for_status()
         return resp.json()
-
-    def get_account_info(self):
-        return self._get("/api/v3/account")
 
     def place_order(self, symbol, side, quantity, order_type="MARKET"):
         path = "/api/v3/order"
