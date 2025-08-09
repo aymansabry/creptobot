@@ -5,7 +5,7 @@ from core.logger import get_logger
 from db.database import get_session_sync
 from db import models
 from trading.utils import calc_profit
-from exchanges import build_exchange  # تم تصحيح هذا السطر
+from ..exchanges import build_exchange  # هذا هو السطر الصحيح
 from core.security import decrypt_text
 from sqlalchemy.orm import Session
 from sqlalchemy import select, update
