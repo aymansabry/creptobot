@@ -1,3 +1,4 @@
+# project_root/trading/arbitrage.py (Corrected)
 import asyncio
 from decimal import Decimal
 from core.config import POLL_INTERVAL, MIN_TRADE_USDT, MIN_PROFIT_PCT
