@@ -1,6 +1,5 @@
-#db/models.py
-from sqlalchemy import Column, Integer, String, Boolean, Float
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, ForeignKey, func, Text
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
@@ -8,21 +7,65 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, nullable=True)
+    telegram_id = Column(String(255), unique=True, index=True, nullable=False)
+    username = Column(String(255), nullable=True)
     is_admin = Column(Boolean, default=False)
 
+    wallet_balance = Column(Float, default=0.0)
     investment_amount = Column(Float, default=0.0)
     profit_earned = Column(Float, default=0.0)
 
-    trading_mode = Column(String, default="demo")  # demo or real
+    trading_mode = Column(String(50), default="demo")
     active = Column(Boolean, default=True)
 
-    encrypted_binance_api_key = Column(String, nullable=True)
-    encrypted_binance_api_secret = Column(String, nullable=True)
-    encrypted_kucoin_api_key = Column(String, nullable=True)
-    encrypted_kucoin_api_secret = Column(String, nullable=True)
-    encrypted_kucoin_api_passphrase = Column(String, nullable=True)
+    encrypted_binance_api_key = Column(Text, nullable=True)
+    encrypted_binance_api_secret = Column(Text, nullable=True)
+    encrypted_kucoin_api_key = Column(Text, nullable=True)
+    encrypted_kucoin_api_secret = Column(Text, nullable=True)
+    encrypted_kucoin_api_passphrase = Column(Text, nullable=True)
 
-    commission_rate = Column(Float, default=0.02)  # 2%
+    commission_rate = Column(Float, default=0.01)  # 1%
     commission_accepted = Column(Boolean, default=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    wallets = relationship("Wallet", back_populates="user")
+    trades = relationship("Trade", back_populates="user")
+    notifications = relationship("Notification", back_populates="user")
+
+
+class Wallet(Base):
+    __tablename__ = "wallets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    platform = Column(String(255), nullable=True)
+    balance = Column(Float, default=0.0)
+    is_active = Column(Boolean, default=True)
+
+    user = relationship("User", back_populates="wallets")
+
+
+class Trade(Base):
+    __tablename__ = "trades"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    trade_type = Column(String(255), nullable=True)
+    amount = Column(Float, nullable=True)
+    profit = Column(Float, nullable=True)
+    status = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="trades")
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="notifications")
