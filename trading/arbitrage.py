@@ -1,4 +1,3 @@
-# project_root/trading/arbitrage.py (Corrected)
 import asyncio
 from decimal import Decimal
 from core.config import POLL_INTERVAL, MIN_TRADE_USDT, MIN_PROFIT_PCT
@@ -6,7 +5,7 @@ from core.logger import get_logger
 from db.database import get_session_sync
 from db import models
 from trading.utils import calc_profit
-from exchanges import build_exchange  # This line is now correct
+from exchanges import build_exchange  # تم تعديل هذا السطر
 from core.security import decrypt_text
 from sqlalchemy.orm import Session
 from sqlalchemy import select, update
