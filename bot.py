@@ -1,10 +1,7 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Text, StateFilter
-from aiogram.types import (
-    ReplyKeyboardRemove,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import and_
@@ -32,26 +29,46 @@ class InvestmentStates(StatesGroup):
     waiting_for_report_start_date = State()
     waiting_for_report_end_date = State()
 
-user_inline_keyboard = InlineKeyboardMarkup(row_width=2)
-user_inline_keyboard.add(
-    InlineKeyboardButton(text="مساعدة /help", callback_data="help"),
-    InlineKeyboardButton(text="تسجيل/تعديل بيانات التداول", callback_data="register_trading_data"),
-    InlineKeyboardButton(text="ابدأ استثمار", callback_data="start_investment"),
-    InlineKeyboardButton(text="استثمار وهمي", callback_data="fake_investment"),
-    InlineKeyboardButton(text="كشف حساب عن فترة", callback_data="account_statement"),
-    InlineKeyboardButton(text="حالة السوق", callback_data="market_status"),
-    InlineKeyboardButton(text="ايقاف الاستثمار", callback_data="stop_investment"),
+# هنا اللوحات المصححة - InlineKeyboardMarkup تحتاج inline_keyboard مع صفوف من الأزرار
+
+user_inline_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="مساعدة /help", callback_data="help"),
+            InlineKeyboardButton(text="تسجيل/تعديل بيانات التداول", callback_data="register_trading_data"),
+        ],
+        [
+            InlineKeyboardButton(text="ابدأ استثمار", callback_data="start_investment"),
+            InlineKeyboardButton(text="استثمار وهمي", callback_data="fake_investment"),
+        ],
+        [
+            InlineKeyboardButton(text="كشف حساب عن فترة", callback_data="account_statement"),
+            InlineKeyboardButton(text="حالة السوق", callback_data="market_status"),
+        ],
+        [
+            InlineKeyboardButton(text="ايقاف الاستثمار", callback_data="stop_investment"),
+        ]
+    ]
 )
 
-owner_inline_keyboard = InlineKeyboardMarkup(row_width=2)
-owner_inline_keyboard.add(
-    InlineKeyboardButton(text="/help", callback_data="help"),
-    InlineKeyboardButton(text="/admin_panel", callback_data="admin_panel"),
-    InlineKeyboardButton(text="تعديل نسبة ربح البوت", callback_data="edit_profit_percentage"),
-    InlineKeyboardButton(text="عدد المستخدمين", callback_data="user_count"),
-    InlineKeyboardButton(text="عدد المستخدمين أونلاين", callback_data="online_user_count"),
-    InlineKeyboardButton(text="تقارير الاستثمار", callback_data="investment_reports"),
-    InlineKeyboardButton(text="حالة البوت البرمجية", callback_data="bot_status"),
+owner_inline_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="/help", callback_data="help"),
+            InlineKeyboardButton(text="/admin_panel", callback_data="admin_panel"),
+        ],
+        [
+            InlineKeyboardButton(text="تعديل نسبة ربح البوت", callback_data="edit_profit_percentage"),
+            InlineKeyboardButton(text="عدد المستخدمين", callback_data="user_count"),
+        ],
+        [
+            InlineKeyboardButton(text="عدد المستخدمين أونلاين", callback_data="online_user_count"),
+            InlineKeyboardButton(text="تقارير الاستثمار", callback_data="investment_reports"),
+        ],
+        [
+            InlineKeyboardButton(text="حالة البوت البرمجية", callback_data="bot_status"),
+        ]
+    ]
 )
 
 def safe_encrypt(text):
@@ -90,9 +107,7 @@ async def cmd_help(message: types.Message):
         "ايقاف الاستثمار\n"
     )
 
-# الدوال الموجودة كما في النسخة اللي شاركتها، مثل start_api_key_registration، receive_api_key، receive_api_secret، receive_passphrase، skip_passphrase، save_api_keys، start_investment، process_investment_amount، run_investment_for_user، fake_investment، ask_report_start_date، handle_date_selection، generate_report، market_status_report، stop_investment، cmd_admin_panel
-
-# سأضع هنا معالج callback مركزي يربط بين أزرار Inline والدوال:
+# باقي الدوال كما هي (start_api_key_registration، receive_api_key، receive_api_secret، receive_passphrase، skip_passphrase، save_api_keys، start_investment، process_investment_amount، run_investment_for_user، fake_investment، ask_report_start_date، handle_date_selection، generate_report، market_status_report، stop_investment، cmd_admin_panel)
 
 @dp.callback_query(lambda c: True)
 async def handle_callbacks(callback_query: types.CallbackQuery, state: FSMContext):
@@ -105,7 +120,6 @@ async def handle_callbacks(callback_query: types.CallbackQuery, state: FSMContex
     elif data == "register_trading_data":
         await start_api_key_registration(message, state)
     elif data.startswith("select_exchange_"):
-        # إعادة استخدام نفس معالج الاختيار
         exchange = data.replace("select_exchange_", "")
         await state.update_data(exchange=exchange)
         await bot.answer_callback_query(callback_query.id)
@@ -122,7 +136,6 @@ async def handle_callbacks(callback_query: types.CallbackQuery, state: FSMContex
     elif data == "stop_investment":
         await stop_investment(message)
     elif data == "admin_panel":
-        # تحقق صلاحية فقط
         if user_id != int(OWNER_ID):
             await bot.answer_callback_query(callback_query.id, text="غير مصرح لك باستخدام هذه الأوامر.", show_alert=True)
             return
@@ -134,7 +147,6 @@ async def handle_callbacks(callback_query: types.CallbackQuery, state: FSMContex
             count = session.query(User).count()
         await bot.send_message(user_id, f"عدد المستخدمين: {count}")
     elif data == "online_user_count":
-        # تحتاج لتعريف مفهوم أونلاين في نظامك (مثلاً من آخر نشاط خلال مدة معينة)
         await bot.send_message(user_id, "ميزة عدد المستخدمين أونلاين تحت التطوير.")
     elif data == "investment_reports":
         await bot.send_message(user_id, "ميزة تقارير الاستثمار تحت التطوير.")
@@ -146,7 +158,6 @@ async def handle_callbacks(callback_query: types.CallbackQuery, state: FSMContex
         await bot.answer_callback_query(callback_query.id, text="خيار غير معروف", show_alert=True)
         return
 
-    # أغلق مؤشر التحميل في الواجهة
     await bot.answer_callback_query(callback_query.id)
 
 async def main():
