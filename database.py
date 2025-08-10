@@ -1,41 +1,42 @@
-# database.py
-import mysql.connector
+import pymysql
 import os
-from mysql.connector import pooling
+from dotenv import load_dotenv
 
-DB_POOL = None
+# تحميل المتغيرات البيئية
+load_dotenv()
 
-def init_pool():
-    global DB_POOL
-    if DB_POOL is None:
-        DB_POOL = pooling.MySQLConnectionPool(
-            pool_name="mypool",
-            pool_size=int(os.getenv("MYSQL_POOL_SIZE", "5")),
-            host=os.getenv("MYSQL_HOST"),
-            user=os.getenv("MYSQL_USER"),
-            password=os.getenv("MYSQL_PASSWORD"),
-            database=os.getenv("MYSQL_DB"),
-            autocommit=True
-        )
+DB_HOST = os.getenv("DB_HOST")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
 
-def get_conn():
-    if DB_POOL is None:
-        init_pool()
-    return DB_POOL.get_connection()
+# الاتصال بقاعدة البيانات
+def get_connection():
+    return pymysql.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        cursorclass=pymysql.cursors.DictCursor
+    )
 
-def query(sql, params=None, fetchone=False):
-    conn = get_conn()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute(sql, params or ())
-    result = cursor.fetchone() if fetchone else cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return result
+# تنفيذ استعلام SELECT
+def query(sql, params=None):
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params or ())
+            result = cursor.fetchall()
+        return result
+    finally:
+        connection.close()
 
+# تنفيذ استعلام INSERT أو UPDATE أو DELETE
 def execute(sql, params=None):
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(sql, params or ())
-    conn.commit()
-    cursor.close()
-    conn.close()
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params or ())
+        connection.commit()
+    finally:
+        connection.close()
