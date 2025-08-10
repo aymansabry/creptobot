@@ -1,42 +1,74 @@
+# handlers.py
+import os
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext
-from database import query, execute
+from telegram.ext import ContextTypes
+from database import query_one, execute, query
+from utils import send_notification_to_user, send_admin_alert
 
-# بدء المحادثة
-def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_name = update.effective_user.username or update.effective_user.first_name
+logger = logging.getLogger(__name__)
 
-    # حفظ المستخدم في قاعدة البيانات إذا لم يكن موجود
-    existing = query("SELECT * FROM users WHERE user_id = %s", (user_id,))
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg = update.effective_user
+    existing = query_one("SELECT * FROM users WHERE telegram_id=%s", (tg.id,))
     if not existing:
-        execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (user_id, user_name))
-
-    keyboard = [
-        [InlineKeyboardButton("📊 عرض الرصيد", callback_data="balance")],
-        [InlineKeyboardButton("⚙️ إعدادات API", callback_data="set_api")],
+        execute("INSERT INTO users (telegram_id, username) VALUES (%s,%s)", (tg.id, tg.username or tg.first_name))
+        # notify admins
+        send_admin_alert("مستخدم جديد", f"User @{tg.username or tg.first_name} ({tg.id}) سجل في البوت.")
+    kb = [
+        [InlineKeyboardButton("📈 بدء الاستثمار", callback_data="invest")],
+        [InlineKeyboardButton("⚙️ إعدادات API", callback_data="api_settings")],
+        [InlineKeyboardButton("📊 تقارير", callback_data="reports")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("أهلاً! اختر من القائمة:", reply_markup=InlineKeyboardMarkup(kb))
 
-    update.message.reply_text(
-        f"مرحباً {user_name} 👋\nاختر أحد الخيارات أدناه:",
-        reply_markup=reply_markup
-    )
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cq = update.callback_query
+    await cq.answer()
+    data = cq.data
+    tg = cq.from_user
+    if data == "invest":
+        user = query_one("SELECT * FROM users WHERE telegram_id=%s", (tg.id,))
+        await cq.edit_message_text(f"رصيدك الحالي: {user.get('invested_amount',0)}\nلاختيار وضع تجريبي / حقيقي استخدم الأوامر.")
+    elif data == "api_settings":
+        text = ("لإضافة مفاتيح Binance: \n/binance <API_KEY> <API_SECRET>\n\n"
+                "لـ Kucoin: \n/kucoin <API_KEY> <API_SECRET> <PASSPHRASE>\n\n"
+                "للمحفظة:\n/wallet <ADDRESS>")
+        await cq.edit_message_text(text)
+    elif data == "reports":
+        await cq.edit_message_text("اطلب التقرير بالأوامر: /report daily|weekly|monthly")
+    else:
+        await cq.edit_message_text("قيد التطوير.")
 
-# التعامل مع الأزرار
-def button_handler(update: Update, context: CallbackContext):
-    query_data = update.callback_query
-    query_data.answer()
+# Commands to save APIs / wallet (example)
+async def binance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg = update.effective_user
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text("Usage: /binance <API_KEY> <API_SECRET>")
+        return
+    key, secret = args
+    execute("UPDATE users SET api_binance_key=%s, api_binance_secret=%s WHERE telegram_id=%s", (key, secret, tg.id))
+    await update.message.reply_text("✅ تم حفظ مفاتيح Binance. يتم التحقق الآن (خلفية).")
+    send_admin_alert("Binance key saved", f"User {tg.id} saved Binance keys.")
 
-    if query_data.data == "balance":
-        # استعلام عن الرصيد (كمثال)
-        user_id = query_data.from_user.id
-        balance = get_user_balance(user_id)
-        query_data.edit_message_text(f"💰 رصيدك الحالي: {balance} USDT")
-    elif query_data.data == "set_api":
-        query_data.edit_message_text("🔑 أرسل لي الـ API Key و Secret بالشكل التالي:\n`API_KEY,API_SECRET`")
+async def kucoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg = update.effective_user
+    args = context.args
+    if len(args) != 3:
+        await update.message.reply_text("Usage: /kucoin <API_KEY> <API_SECRET> <PASSPHRASE>")
+        return
+    key, secret, passp = args
+    execute("UPDATE users SET api_kucoin_key=%s, api_kucoin_secret=%s, api_kucoin_pass=%s WHERE telegram_id=%s", (key, secret, passp, tg.id))
+    await update.message.reply_text("✅ تم حفظ مفاتيح Kucoin.")
+    send_admin_alert("Kucoin key saved", f"User {tg.id} saved Kucoin keys.")
 
-# دالة وهمية للحصول على الرصيد (تعدل لاحقاً لربط منصات التداول)
-def get_user_balance(user_id):
-    # مثال: نعيد قيمة ثابتة حالياً
-    return 100.0
+async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg = update.effective_user
+    args = context.args
+    if len(args) != 1:
+        await update.message.reply_text("Usage: /wallet <ADDRESS>")
+        return
+    addr = args[0]
+    execute("UPDATE users SET wallet_address=%s WHERE telegram_id=%s", (addr, tg.id))
+    await update.message.reply_text("✅ تم حفظ عنوان المحفظة.")
