@@ -1,7 +1,9 @@
 python-telegram-bot==20.3
-mysql-connector-python
-requests
-openai
-apscheduler
-Flask
-python-dotenv
+flask==2.3.2
+flask_sqlalchemy==3.0.5
+mysqlclient==2.1.1
+requests==2.31.0
+python-dotenv==1.0.0
+binance-connector==3.4.0
+kucoin-python==1.0.12
+apscheduler==3.10.1
