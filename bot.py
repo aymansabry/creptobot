@@ -1,6 +1,6 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command, Text
+from aiogram.filters import Command, Text, StateFilter
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
     InlineKeyboardMarkup, InlineKeyboardButton
@@ -112,19 +112,19 @@ async def exchange_selected(callback_query: types.CallbackQuery, state: FSMConte
     await bot.send_message(callback_query.from_user.id, f"أدخل مفتاح API لمنصة {exchange.capitalize()}:")
     await state.set_state(InvestmentStates.waiting_for_api_key)
 
-@dp.message(state=InvestmentStates.waiting_for_api_key)
+@dp.message(StateFilter(InvestmentStates.waiting_for_api_key))
 async def receive_api_key(message: types.Message, state: FSMContext):
     await state.update_data(api_key=message.text.strip())
     await message.answer("أدخل API Secret:")
     await state.set_state(InvestmentStates.waiting_for_api_secret)
 
-@dp.message(state=InvestmentStates.waiting_for_api_secret)
+@dp.message(StateFilter(InvestmentStates.waiting_for_api_secret))
 async def receive_api_secret(message: types.Message, state: FSMContext):
     await state.update_data(api_secret=message.text.strip())
     await message.answer("أدخل Passphrase إن وجد أو أرسل /skip لتخطي:")
     await state.set_state(InvestmentStates.waiting_for_passphrase)
 
-@dp.message(state=InvestmentStates.waiting_for_passphrase)
+@dp.message(StateFilter(InvestmentStates.waiting_for_passphrase))
 async def receive_passphrase(message: types.Message, state: FSMContext):
     await state.update_data(passphrase=message.text.strip())
     await save_api_keys(message.from_user.id, state)
@@ -198,7 +198,7 @@ async def start_investment(message: types.Message, state: FSMContext):
     await message.answer("أدخل مبلغ الاستثمار (مثلاً: 1000):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(InvestmentStates.waiting_for_investment_amount)
 
-@dp.message(state=InvestmentStates.waiting_for_investment_amount)
+@dp.message(StateFilter(InvestmentStates.waiting_for_investment_amount))
 async def process_investment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text.strip())
@@ -221,7 +221,7 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     await message.answer(f"تم تعيين مبلغ الاستثمار: {amount}.\nبدء الاستثمار الآلي الآن...")
     await state.clear()
 
-    # هنا تضيف كود تشغيل استراتيجية المراجحة الفعلية
+    # تشغيل استراتيجية المراجحة الفعلية
     asyncio.create_task(run_investment_for_user(user))
 
 async def run_investment_for_user(user: User):
