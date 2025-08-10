@@ -3,9 +3,10 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Text
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.filters import StateFilter
 from sqlalchemy import and_
 from cryptography.fernet import Fernet, InvalidToken
-import ccxt
 import datetime
 
 from database import create_tables, SessionLocal
@@ -19,6 +20,9 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 fernet = Fernet(FERNET_KEY.encode())
+
+class InvestmentStates(StatesGroup):
+    waiting_for_investment_amount = State()
 
 # قوائم المستخدمين
 user_keyboard = ReplyKeyboardMarkup(
@@ -70,8 +74,8 @@ async def cmd_help(message: types.Message):
 
 @dp.message(Text("تسجيل/تعديل بيانات التداول"))
 async def handle_api_key_entry(message: types.Message):
-    # هنا تبدأ حوارات تسجيل/تعديل مفاتيح API
-    await message.answer("يرجى اختيار المنصة وإدخال مفاتيح API (لم يتم تنفيذها بعد).")
+    # هنا تبدأ حوارات تسجيل/تعديل مفاتيح API - تحتاج إضافة منطقك هنا
+    await message.answer("يرجى اختيار المنصة وإدخال مفاتيح API (قيد التطوير).")
 
 @dp.message(Text("ابدأ استثمار"))
 async def start_investment(message: types.Message, state: FSMContext):
@@ -84,9 +88,9 @@ async def start_investment(message: types.Message, state: FSMContext):
             await message.answer("تم إيقاف الاستثمار الخاص بك، لا يمكنك البدء حالياً.")
             return
     await message.answer("أدخل مبلغ الاستثمار (مثلاً: 1000):", reply_markup=ReplyKeyboardRemove())
-    await state.set_state("waiting_for_investment_amount")
+    await state.set_state(InvestmentStates.waiting_for_investment_amount)
 
-@dp.message(state="waiting_for_investment_amount")
+@dp.message(StateFilter(InvestmentStates.waiting_for_investment_amount))
 async def process_investment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text.strip())
@@ -103,7 +107,7 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
             await state.clear()
             return
 
-        # تحقق الرصيد (مبسط حاليا)
+        # تحديث مبلغ الاستثمار وتفعيل المستخدم
         user.investment_amount = amount
         user.is_active = True
         session.commit()
@@ -111,14 +115,28 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     await message.answer(f"تم تعيين مبلغ الاستثمار: {amount} بنجاح.\nيتم الآن بدء الاستثمار الآلي...")
     await state.clear()
 
+    # استدعاء دالة تنفيذ الاستثمار (تحتاج بناء هذه الدالة)
     await run_investment_for_user(user)
 
 async def run_investment_for_user(user: User):
+    # هذه الدالة مثال مبدئي يجب استكمالها حسب منطق الاستثمار الفعلي
     with SessionLocal() as session:
         api_keys = session.query(APIKey).filter(
             APIKey.user_id == user.id,
             APIKey.is_active == True
         ).all()
 
+    # هنا تقوم بالتعامل مع مفاتيح API وبدء عملية المراجحة أو الاستثمار
     for key in api_keys:
-        exchange_name = key
+        exchange_name = key.exchange
+        # تنفيذ تداولات أو استدعاء API تبعًا للمنصة
+
+    # يمكنك إضافة لوجيك تسجيل التداولات في TradeLog
+
+@dp.message(Text("استثمار وهمي"))
+async def fake_investment(message: types.Message):
+    await message.answer("ميزة الاستثمار الوهمي قيد التطوير...")
+
+@dp.message(Text("كشف حساب عن فترة"))
+async def account_statement(message: types.Message):
+    await message.answer("يرجى إد
