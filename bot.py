@@ -2,15 +2,14 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Text
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from sqlalchemy import and_
+from aiogram.fsm.state import State, StatesGroup
+from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet, InvalidToken
-import ccxt
 import datetime
 
 from database import create_tables, SessionLocal
-from models import User, APIKey, TradeLog
+from models import User, APIKey
 from settings import BOT_TOKEN, OWNER_ID, FERNET_KEY
 
 # إنشاء الجداول قبل بدء البوت
@@ -90,8 +89,12 @@ async def start_investment(message: types.Message, state: FSMContext):
     await message.answer("أدخل مبلغ الاستثمار (مثلاً: 1000):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(InvestmentStates.waiting_for_investment_amount)
 
-@dp.message(state=InvestmentStates.waiting_for_investment_amount)
+@dp.message()
 async def process_investment_amount(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state != InvestmentStates.waiting_for_investment_amount.state:
+        return  # تجاهل الرسائل في حالة أخرى
+
     try:
         amount = float(message.text.strip())
         if amount <= 0:
@@ -107,7 +110,6 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
             await state.clear()
             return
 
-        # تحقق الرصيد (مبسط حاليا)
         user.investment_amount = amount
         user.is_active = True
         session.commit()
@@ -115,33 +117,8 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     await message.answer(f"تم تعيين مبلغ الاستثمار: {amount} بنجاح.\nيتم الآن بدء الاستثمار الآلي...")
     await state.clear()
 
-    # تابع الاستثمار - يمكن تعديل هذا لتكامل مع المنطق الحقيقي للاستثمار
-    await run_investment_for_user(user)
-
-async def run_investment_for_user(user: User):
-    # هنا تضع منطق الاستثمار الفعلي لكل APIKey مرتبط بالمستخدم
-    with SessionLocal() as session:
-        api_keys = session.query(APIKey).filter(
-            APIKey.user_id == user.id,
-            APIKey.is_active == True
-        ).all()
-
-    for key in api_keys:
-        # مثال: استدعاء exchange من ccxt
-        try:
-            api_key = safe_decrypt(key.api_key_encrypted)
-            api_secret = safe_decrypt(key.api_secret_encrypted)
-            exchange_name = key.exchange.lower()
-            exchange_class = getattr(ccxt, exchange_name)
-            exchange = exchange_class({
-                'apiKey': api_key,
-                'secret': api_secret,
-                'enableRateLimit': True,
-            })
-            # تنفيذ عمليات المراجحة هنا (مثال فقط)
-            # ...
-        except Exception as e:
-            print(f"Error with exchange {key.exchange}: {e}")
+    # هنا يمكن استدعاء دالة الاستثمار (غير مفعلة في هذا المثال)
+    # await run_investment_for_user(user)
 
 async def main():
     print("البوت بدأ العمل")
