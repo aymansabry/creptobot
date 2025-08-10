@@ -1,11 +1,10 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from database import create_tables, SessionLocal
+from database import create_tables
 from settings import BOT_TOKEN, OWNER_ID
 
-# إنشاء الجداول قبل بدء البوت
-create_tables()
+create_tables()  # تأكد من إنشاء الجداول قبل تشغيل البوت
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -18,7 +17,6 @@ async def cmd_start(message: types.Message):
 async def cmd_help(message: types.Message):
     await message.reply("هذه أوامر البوت المتاحة:\n/start\n/help")
 
-# مثال على إضافة رسالة خاصة للمالك
 @dp.message_handler(lambda message: message.from_user.id == int(OWNER_ID))
 async def owner_only(message: types.Message):
     await message.reply("مرحباً مالك البوت!")
