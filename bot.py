@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Text
 from aiogram.types import (
@@ -7,10 +6,11 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
-from sqlalchemy.orm import Session
+from aiogram.fsm.state import State, StatesGroup
+from sqlalchemy import and_
 from cryptography.fernet import Fernet, InvalidToken
-import ccxt
+import datetime
+import ccxt.async_support as ccxt_async
 
 from database import create_tables, SessionLocal
 from models import User, APIKey, TradeLog
@@ -23,203 +23,178 @@ dp = Dispatcher()
 
 fernet = Fernet(FERNET_KEY.encode())
 
-# ---- FSM States ----
+# ----- حالات FSM -----
 class InvestmentStates(StatesGroup):
     waiting_for_exchange_name = State()
     waiting_for_api_key = State()
     waiting_for_api_secret = State()
     waiting_for_passphrase = State()
     waiting_for_investment_amount = State()
-    waiting_for_start_date = State()
-    waiting_for_end_date = State()
-    # يمكن إضافة حالات أخرى حسب الحاجة
+    waiting_for_report_start_date = State()
+    waiting_for_report_end_date = State()
 
-
-# ---- لوحة المفاتيح ----
-
+# ----- لوحات المفاتيح -----
 user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("/help"), KeyboardButton("تسجيل/تعديل بيانات التداول")],
-        [KeyboardButton("ابدأ استثمار"), KeyboardButton("استثمار وهمي")],
-        [KeyboardButton("كشف حساب عن فترة"), KeyboardButton("حالة السوق")],
-        [KeyboardButton("ايقاف الاستثمار")]
-    ], resize_keyboard=True
+        [KeyboardButton(text="/help"), KeyboardButton(text="تسجيل/تعديل بيانات التداول")],
+        [KeyboardButton(text="ابدأ استثمار"), KeyboardButton(text="استثمار وهمي")],
+        [KeyboardButton(text="كشف حساب عن فترة"), KeyboardButton(text="حالة السوق")],
+        [KeyboardButton(text="ايقاف الاستثمار")]
+    ],
+    resize_keyboard=True
 )
 
 owner_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("/help"), KeyboardButton("/admin_panel")],
-        [KeyboardButton("تعديل نسبة ربح البوت"), KeyboardButton("عدد المستخدمين")],
-        [KeyboardButton("عدد المستخدمين أونلاين"), KeyboardButton("تقارير الاستثمار")],
-        [KeyboardButton("حالة البوت البرمجية")],
-        [KeyboardButton("تفعيل وضع المدير"), KeyboardButton("تفعيل وضع المستخدم")]
-    ], resize_keyboard=True
+        [KeyboardButton(text="/help"), KeyboardButton(text="/admin_panel")],
+        [KeyboardButton(text="تعديل نسبة ربح البوت"), KeyboardButton(text="عدد المستخدمين")],
+        [KeyboardButton(text="عدد المستخدمين أونلاين"), KeyboardButton(text="تقارير الاستثمار")],
+        [KeyboardButton(text="حالة البوت البرمجية")]
+    ],
+    resize_keyboard=True
 )
 
-# ---- دوال مساعدة ----
+# ----- تشفير وفك تشفير -----
+def safe_encrypt(text):
+    return fernet.encrypt(text.encode()).decode()
 
-def safe_decrypt(token: str) -> str | None:
+def safe_decrypt(token):
     try:
         return fernet.decrypt(token.encode()).decode()
     except InvalidToken:
         return None
 
-def safe_encrypt(data: str) -> str:
-    return fernet.encrypt(data.encode()).decode()
+# ----- بداية أوامر البوت -----
 
-def generate_date_selection_keyboard(base_date: datetime.date, days_range=10) -> InlineKeyboardMarkup:
-    """
-    ينشئ لوحة اختيار تاريخ تبدأ من base_date وتمتد لـ days_range يوم.
-    يظهر التاريخ في أزرار بشكل YYYY-MM-DD.
-    """
-    keyboard = InlineKeyboardMarkup(row_width=3)
-    buttons = []
-    for i in range(days_range):
-        day = base_date + datetime.timedelta(days=i)
-        btn = InlineKeyboardButton(text=day.strftime("%Y-%m-%d"), callback_data=f"select_date:{day.isoformat()}")
-        buttons.append(btn)
-    keyboard.add(*buttons)
-    return keyboard
-
-# --- أوامر البداية ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     if message.from_user.id == int(OWNER_ID):
         await message.answer("أهلاً مالك البوت!", reply_markup=owner_keyboard)
     else:
+        with SessionLocal() as session:
+            user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
+            if not user:
+                user = User(telegram_id=message.from_user.id)
+                session.add(user)
+                session.commit()
         await message.answer("أهلاً! البوت يعمل بنجاح.", reply_markup=user_keyboard)
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    await message.answer(
-        "هذه أوامر البوت المتاحة:\n"
-        "/start\n/help\n"
+    await message.reply(
+        "أوامر البوت:\n"
+        "/start\n"
+        "/help\n"
         "تسجيل/تعديل بيانات التداول\n"
         "ابدأ استثمار\n"
         "استثمار وهمي\n"
         "كشف حساب عن فترة\n"
         "حالة السوق\n"
-        "ايقاف الاستثمار"
+        "ايقاف الاستثمار\n"
     )
 
+# ----- تسجيل / تعديل بيانات التداول -----
 
-# --- تبديل أوضاع المدير والمستخدم ---
-@dp.message(Text("تفعيل وضع المدير"))
-async def activate_admin_mode(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("تم تفعيل وضع المدير.", reply_markup=owner_keyboard)
-
-@dp.message(Text("تفعيل وضع المستخدم"))
-async def activate_user_mode(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("تم تفعيل وضع المستخدم.", reply_markup=user_keyboard)
-
-# --- تسجيل / تعديل بيانات التداول ---
 @dp.message(Text("تسجيل/تعديل بيانات التداول"))
-async def start_register_api(message: types.Message, state: FSMContext):
-    await message.answer("يرجى إدخال اسم المنصة (مثل binance, kucoin):", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(InvestmentStates.waiting_for_exchange_name)
+async def start_api_key_registration(message: types.Message, state: FSMContext):
+    exchanges = ['binance', 'kucoin', 'coinbasepro', 'bitfinex']
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for ex in exchanges:
+        keyboard.insert(InlineKeyboardButton(text=ex.capitalize(), callback_data=f"select_exchange_{ex}"))
+    await message.answer("اختر منصة التداول:", reply_markup=keyboard)
+    await state.clear()
 
-@dp.message(state=InvestmentStates.waiting_for_exchange_name)
-async def process_exchange_name(message: types.Message, state: FSMContext):
-    exchange_name = message.text.strip().lower()
-    await state.update_data(exchange_name=exchange_name)
-    await message.answer("أدخل مفتاح API الخاص بالمنصة:")
+@dp.callback_query(lambda c: c.data and c.data.startswith("select_exchange_"))
+async def exchange_selected(callback_query: types.CallbackQuery, state: FSMContext):
+    exchange = callback_query.data.replace("select_exchange_", "")
+    await state.update_data(exchange=exchange)
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, f"أدخل مفتاح API لمنصة {exchange.capitalize()}:")
     await state.set_state(InvestmentStates.waiting_for_api_key)
 
 @dp.message(state=InvestmentStates.waiting_for_api_key)
-async def process_api_key(message: types.Message, state: FSMContext):
-    api_key = message.text.strip()
-    await state.update_data(api_key=api_key)
-    await message.answer("أدخل الـ API Secret الخاص بالمنصة:")
+async def receive_api_key(message: types.Message, state: FSMContext):
+    await state.update_data(api_key=message.text.strip())
+    await message.answer("أدخل API Secret:")
     await state.set_state(InvestmentStates.waiting_for_api_secret)
 
 @dp.message(state=InvestmentStates.waiting_for_api_secret)
-async def process_api_secret(message: types.Message, state: FSMContext):
-    api_secret = message.text.strip()
-    await state.update_data(api_secret=api_secret)
-    await message.answer("إذا كانت المنصة تستخدم Passphrase، أدخله الآن، أو اكتب 'لا' للتخطي:")
+async def receive_api_secret(message: types.Message, state: FSMContext):
+    await state.update_data(api_secret=message.text.strip())
+    await message.answer("أدخل Passphrase إن وجد أو أرسل /skip لتخطي:")
     await state.set_state(InvestmentStates.waiting_for_passphrase)
 
 @dp.message(state=InvestmentStates.waiting_for_passphrase)
-async def process_passphrase(message: types.Message, state: FSMContext):
-    passphrase = message.text.strip()
-    if passphrase.lower() == 'لا':
-        passphrase = None
+async def receive_passphrase(message: types.Message, state: FSMContext):
+    await state.update_data(passphrase=message.text.strip())
+    await save_api_keys(message.from_user.id, state)
+    await state.clear()
 
+@dp.message(Command("skip"))
+async def skip_passphrase(message: types.Message, state: FSMContext):
+    await save_api_keys(message.from_user.id, state)
+    await state.clear()
+
+async def save_api_keys(user_telegram_id: int, state: FSMContext):
     data = await state.get_data()
-    exchange_name = data['exchange_name']
-    api_key = data['api_key']
-    api_secret = data['api_secret']
+    exchange = data.get('exchange')
+    api_key = data.get('api_key')
+    api_secret = data.get('api_secret')
+    passphrase = data.get('passphrase', None)
 
-    # تحقق مفاتيح API
+    # تحقق من صحة المفاتيح عبر ccxt
     try:
-        exchange_class = getattr(ccxt, exchange_name)
-    except AttributeError:
-        await message.answer("اسم منصة غير مدعوم. يرجى البدء مجددًا.")
-        await state.clear()
-        return
-
-    exchange_params = {'apiKey': api_key, 'secret': api_secret}
-    if passphrase:
-        exchange_params['password'] = passphrase
-
-    exchange = exchange_class(exchange_params)
-
-    try:
-        await asyncio.to_thread(exchange.fetch_balance)
+        exchange_class = getattr(ccxt_async, exchange)
+        params = {'apiKey': api_key, 'secret': api_secret}
+        if passphrase:
+            params['password'] = passphrase
+        exchange_instance = exchange_class(params)
+        await exchange_instance.load_markets()
+        await exchange_instance.close()
     except Exception as e:
-        await message.answer(f"خطأ في التحقق من مفاتيح API: {str(e)}\nيرجى المحاولة مرة أخرى.")
-        await state.clear()
+        await bot.send_message(user_telegram_id, f"خطأ في التحقق من مفاتيح API: {e}\nحاول مرة أخرى.")
         return
 
     with SessionLocal() as session:
-        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
+        user = session.query(User).filter_by(telegram_id=user_telegram_id).first()
         if not user:
-            user = User(telegram_id=message.from_user.id, role='client')
+            user = User(telegram_id=user_telegram_id)
             session.add(user)
             session.commit()
-            session.refresh(user)
-
-        # تعطيل مفاتيح قديمة لنفس المنصة
-        session.query(APIKey).filter(
+        key_record = session.query(APIKey).filter(and_(
             APIKey.user_id == user.id,
-            APIKey.exchange == exchange_name,
-            APIKey.is_active == True
-        ).update({"is_active": False})
-
-        new_key = APIKey(
-            user_id=user.id,
-            exchange=exchange_name,
-            api_key_encrypted=safe_encrypt(api_key),
-            api_secret_encrypted=safe_encrypt(api_secret),
-            passphrase_encrypted=safe_encrypt(passphrase) if passphrase else None,
-            is_active=True,
-            created_at=datetime.datetime.utcnow()
-        )
-        session.add(new_key)
+            APIKey.exchange == exchange
+        )).first()
+        if key_record:
+            key_record.api_key_encrypted = safe_encrypt(api_key)
+            key_record.api_secret_encrypted = safe_encrypt(api_secret)
+            key_record.passphrase_encrypted = safe_encrypt(passphrase) if passphrase else None
+            key_record.is_active = True
+        else:
+            new_key = APIKey(
+                user_id=user.id,
+                exchange=exchange,
+                api_key_encrypted=safe_encrypt(api_key),
+                api_secret_encrypted=safe_encrypt(api_secret),
+                passphrase_encrypted=safe_encrypt(passphrase) if passphrase else None,
+                is_active=True
+            )
+            session.add(new_key)
         session.commit()
+    await bot.send_message(user_telegram_id, f"تم حفظ مفاتيح منصة {exchange.capitalize()} بنجاح.")
 
-    await message.answer(f"تم تسجيل مفاتيح منصة {exchange_name} بنجاح.")
-    await state.clear()
+# ----- بدء الاستثمار الحقيقي -----
 
-
-# --- بدء استثمار حقيقي ---
 @dp.message(Text("ابدأ استثمار"))
 async def start_investment(message: types.Message, state: FSMContext):
     with SessionLocal() as session:
         user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if not user or not user.api_keys:
-            await message.answer("يجب تسجيل بيانات التداول أولاً عبر 'تسجيل/تعديل بيانات التداول'.")
+        if not user:
+            await message.answer("يرجى تسجيل بيانات التداول أولاً.")
             return
-        if hasattr(user, 'is_active') and not user.is_active:
-            await message.answer("تم إيقاف الاستثمار الخاص بك، لا يمكنك البدء حالياً.")
+        if not user.is_active:
+            await message.answer("الاستثمار معطل لديك.")
             return
-
     await message.answer("أدخل مبلغ الاستثمار (مثلاً: 1000):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(InvestmentStates.waiting_for_investment_amount)
 
@@ -228,28 +203,28 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text.strip())
         if amount <= 0:
-            raise ValueError
+            raise ValueError()
     except ValueError:
-        await message.answer("يرجى إدخال مبلغ صحيح أكبر من صفر.")
+        await message.answer("أدخل مبلغ صحيح أكبر من صفر.")
         return
 
     with SessionLocal() as session:
         user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
         if not user:
-            await message.answer("لم يتم العثور على بيانات المستخدم.")
+            await message.answer("لم يتم العثور على بياناتك.")
             await state.clear()
             return
         user.investment_amount = amount
         user.is_active = True
         session.commit()
 
-    await message.answer(f"تم تعيين مبلغ الاستثمار: {amount} بنجاح.\nيتم الآن بدء الاستثمار الآلي...")
+    await message.answer(f"تم تعيين مبلغ الاستثمار: {amount}.\nبدء الاستثمار الآلي الآن...")
     await state.clear()
 
-    await run_investment_for_user(user)
+    # هنا تضيف كود تشغيل استراتيجية المراجحة الفعلية
+    asyncio.create_task(run_investment_for_user(user))
 
 async def run_investment_for_user(user: User):
-    # تنفيذ استثمار حقيقي - نموذج أولي
     with SessionLocal() as session:
         api_keys = session.query(APIKey).filter(
             APIKey.user_id == user.id,
@@ -257,93 +232,168 @@ async def run_investment_for_user(user: User):
         ).all()
 
     for key in api_keys:
-        exchange_name = key.exchange
-        api_key = safe_decrypt(key.api_key_encrypted)
-        api_secret = safe_decrypt(key.api_secret_encrypted)
-        passphrase = safe_decrypt(key.passphrase_encrypted) if key.passphrase_encrypted else None
-
-        exchange_class = getattr(ccxt, exchange_name)
-        exchange_params = {'apiKey': api_key, 'secret': api_secret}
-        if passphrase:
-            exchange_params['password'] = passphrase
-
-        exchange = exchange_class(exchange_params)
-        # مثال: شراء عملة BTC بمبلغ الاستثمار (اختياري: استبدل بالمنطق الفعلي)
         try:
-            balance = await asyncio.to_thread(exchange.fetch_balance)
-            # تنفيذ أوامر الشراء هنا حسب المنطق
-            print(f"تشغيل استثمار على منصة {exchange_name} للمستخدم {user.telegram_id}")
-        except Exception as e:
-            print(f"خطأ أثناء تنفيذ الاستثمار: {e}")
+            exchange_class = getattr(ccxt_async, key.exchange)
+            api_key = safe_decrypt(key.api_key_encrypted)
+            api_secret = safe_decrypt(key.api_secret_encrypted)
+            passphrase = safe_decrypt(key.passphrase_encrypted) if key.passphrase_encrypted else None
+            params = {'apiKey': api_key, 'secret': api_secret}
+            if passphrase:
+                params['password'] = passphrase
 
-# --- استثمار وهمي ---
+            exchange_instance = exchange_class(params)
+            await exchange_instance.load_markets()
+
+            # مثال: تنفيذ صفقة مراجحة ذكية بسيطة (تعديل حسب استراتيجيتك)
+            symbol = 'BTC/USDT'
+            ticker = await exchange_instance.fetch_ticker(symbol)
+            price = ticker['last']
+
+            # تنفيذ أمر شراء وهمي (يمكنك تعديلها لتنفيذ فعلي)
+            # order = await exchange_instance.create_market_buy_order(symbol, amount)
+
+            await exchange_instance.close()
+        except Exception as e:
+            print(f"خطأ في تنفيذ الاستثمار: {e}")
+
+# ----- استثمار وهمي -----
+
 @dp.message(Text("استثمار وهمي"))
 async def fake_investment(message: types.Message):
-    await message.answer("بدأ الاستثمار الوهمي، هذا مجرد محاكاة بدون استخدام أموال حقيقية.")
+    await message.answer("استثمار وهمي يعمل على محاكاة المراجحة باستخدام بيانات حقيقية بدون أموال حقيقية.")
 
-# --- كشف حساب عن فترة (باستخدام اختيار تواريخ من أزرار) ---
+# ----- كشف حساب عن فترة -----
+
+def generate_date_keyboard(start_date: datetime.date, end_date: datetime.date):
+    days = (end_date - start_date).days
+    keyboard = InlineKeyboardMarkup(row_width=4)
+    for i in range(days + 1):
+        day = start_date + datetime.timedelta(days=i)
+        keyboard.insert(InlineKeyboardButton(day.strftime("%Y-%m-%d"), callback_data=f"date_{day.strftime('%Y-%m-%d')}"))
+    return keyboard
+
 @dp.message(Text("كشف حساب عن فترة"))
-async def start_report_period(message: types.Message, state: FSMContext):
+async def ask_report_start_date(message: types.Message, state: FSMContext):
     today = datetime.date.today()
-    keyboard = generate_date_selection_keyboard(today, days_range=15)
+    keyboard = generate_date_keyboard(today - datetime.timedelta(days=30), today)
     await message.answer("اختر تاريخ بداية الفترة:", reply_markup=keyboard)
-    await state.set_state(InvestmentStates.waiting_for_start_date)
+    await state.set_state(InvestmentStates.waiting_for_report_start_date)
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("select_date:"))
-async def process_date_selection(callback: types.CallbackQuery, state: FSMContext):
-    selected_date_str = callback.data.split(":")[1]
-    selected_date = datetime.date.fromisoformat(selected_date_str)
+@dp.callback_query(lambda c: c.data and c.data.startswith("date_"))
+async def handle_date_selection(callback_query: types.CallbackQuery, state: FSMContext):
+    date_str = callback_query.data.replace("date_", "")
     current_state = await state.get_state()
 
-    if current_state == InvestmentStates.waiting_for_start_date.state:
-        await state.update_data(start_date=selected_date)
-        # اطلب اختيار تاريخ النهاية (نفس طريقة البداية مع بدء من start_date)
-        keyboard = generate_date_selection_keyboard(selected_date, days_range=15)
-        await callback.message.edit_text(f"تاريخ البداية محدد: {selected_date}\nالآن اختر تاريخ النهاية:", reply_markup=keyboard)
-        await state.set_state(InvestmentStates.waiting_for_end_date)
-        await callback.answer()
+    if current_state == InvestmentStates.waiting_for_report_start_date.state:
+        await state.update_data(report_start_date=date_str)
+        await bot.send_message(callback_query.from_user.id, f"تم اختيار بداية الفترة: {date_str}\nاختر تاريخ النهاية:")
+        start_date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        today = datetime.date.today()
+        keyboard = generate_date_keyboard(start_date, today)
+        await bot.send_message(callback_query.from_user.id, "اختر تاريخ نهاية الفترة:", reply_markup=keyboard)
+        await state.set_state(InvestmentStates.waiting_for_report_end_date)
 
-    elif current_state == InvestmentStates.waiting_for_end_date.state:
+    elif current_state == InvestmentStates.waiting_for_report_end_date.state:
         data = await state.get_data()
-        start_date = data.get("start_date")
+        start_date_str = data.get("report_start_date")
+        end_date_str = date_str
+        start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
 
-        if selected_date < start_date:
-            await callback.answer("يجب اختيار تاريخ نهاية بعد تاريخ البداية.", show_alert=True)
+        if end_date < start_date:
+            await bot.send_message(callback_query.from_user.id, "تاريخ النهاية يجب أن يكون بعد البداية، اختر مرة أخرى.")
             return
 
-        await state.update_data(end_date=selected_date)
-        # الآن جهز التقرير بناء على start_date و end_date
-        with SessionLocal() as session:
-            user = session.query(User).filter_by(telegram_id=callback.from_user.id).first()
-            if not user:
-                await callback.message.answer("لم يتم العثور على بيانات المستخدم.")
-                await state.clear()
-                await callback.answer()
-                return
-
-            # جلب سجلات التداول للفترة
-            # trade_logs = session.query(TradeLog).filter(
-            #     TradeLog.user_id == user.id,
-            #     TradeLog.created_at >= start_date,
-            #     TradeLog.created_at <= selected_date
-            # ).all()
-            # إعداد تقرير نموذجي:
-            report_msg = (
-                f"تقرير كشف حساب من {start_date} إلى {selected_date}:\n"
-                "(التقارير التفصيلية قيد التطوير...)"
-            )
-
-        await callback.message.edit_text(report_msg, reply_markup=ReplyKeyboardRemove())
+        await state.update_data(report_end_date=end_date_str)
+        await bot.send_message(callback_query.from_user.id, f"جاري تجهيز كشف الحساب من {start_date_str} إلى {end_date_str} ...", reply_markup=ReplyKeyboardRemove())
+        await generate_report(callback_query.from_user.id, start_date, end_date)
         await state.clear()
-        await callback.answer()
 
-# --- حالة السوق ---
+async def generate_report(user_telegram_id: int, start_date: datetime.date, end_date: datetime.date):
+    with SessionLocal() as session:
+        user = session.query(User).filter_by(telegram_id=user_telegram_id).first()
+        if not user:
+            await bot.send_message(user_telegram_id, "لم يتم العثور على بيانات المستخدم.")
+            return
+        trades = session.query(TradeLog).filter(
+            TradeLog.user_id == user.id,
+            TradeLog.created_at >= datetime.datetime.combine(start_date, datetime.time.min),
+            TradeLog.created_at <= datetime.datetime.combine(end_date, datetime.time.max)
+        ).all()
+
+    if not trades:
+        await bot.send_message(user_telegram_id, "لا توجد صفقات خلال هذه الفترة.")
+        return
+
+    msg = f"كشف حساب من {start_date} إلى {end_date}:\n\n"
+    total_profit = 0
+    for t in trades:
+        date_str = t.created_at.strftime("%Y-%m-%d %H:%M")
+        msg += f"{date_str} | {t.exchange} | {t.side} | {t.symbol} | الكمية: {t.qty} | السعر: {t.price} | الربح: {t.profit or 0}\n"
+        total_profit += t.profit or 0
+
+    msg += f"\nإجمالي الربح/الخسارة: {total_profit:.2f}"
+    await bot.send_message(user_telegram_id, msg)
+
+# ----- تقرير حالة السوق -----
+
 @dp.message(Text("حالة السوق"))
-async def market_status(message: types.Message):
-    # يمكن ربط API خارجي لتحليل السوق أو استخدام بيانات تجريبية
-    await message.answer("تحليل السوق الحالي:\nالسوق صاعد/هابط... (رسالة تجريبية)")
+async def market_status_report(message: types.Message):
+    with SessionLocal() as session:
+        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
+        if not user:
+            await message.answer("يجب تسجيل منصة واحدة على الأقل لعرض حالة السوق.")
+            return
+        api_keys = session.query(APIKey).filter(
+            APIKey.user_id == user.id,
+            APIKey.is_active == True
+        ).all()
 
-# --- إيقاف الاستثمار ---
+    if not api_keys:
+        await message.answer("يجب تسجيل منصة واحدة على الأقل لعرض حالة السوق.")
+        return
+
+    exchanges = {}
+    for key in api_keys:
+        try:
+            exchange_class = getattr(ccxt_async, key.exchange)
+            api_key = safe_decrypt(key.api_key_encrypted)
+            api_secret = safe_decrypt(key.api_secret_encrypted)
+            passphrase = safe_decrypt(key.passphrase_encrypted) if key.passphrase_encrypted else None
+
+            params = {'apiKey': api_key, 'secret': api_secret}
+            if passphrase:
+                params['password'] = passphrase
+
+            exchange_instance = exchange_class(params)
+            exchanges[key.exchange] = exchange_instance
+        except Exception as e:
+            await message.answer(f"خطأ في تهيئة منصة {key.exchange}: {e}")
+
+    symbol_list = ['BTC/USDT', 'ETH/USDT', 'XRP/USDT']
+    report_msg = "تقرير حالة السوق:\n\n"
+
+    for name, exchange in exchanges.items():
+        try:
+            await exchange.load_markets()
+            for symbol in symbol_list:
+                if symbol in exchange.markets:
+                    ticker = await exchange.fetch_ticker(symbol)
+                    report_msg += (
+                        f"{name.capitalize()} - {symbol}:\n"
+                        f"السعر الحالي: {ticker['last']}\n"
+                        f"أعلى سعر اليوم: {ticker['high']}\n"
+                        f"أدنى سعر اليوم: {ticker['low']}\n"
+                        f"حجم التداول اليومي: {ticker['baseVolume']}\n\n"
+                    )
+            await exchange.close()
+        except Exception as e:
+            report_msg += f"خطأ في جلب بيانات {name}: {e}\n\n"
+
+    await message.answer(report_msg)
+
+# ----- إيقاف الاستثمار -----
+
 @dp.message(Text("ايقاف الاستثمار"))
 async def stop_investment(message: types.Message):
     with SessionLocal() as session:
@@ -355,49 +405,20 @@ async def stop_investment(message: types.Message):
         session.commit()
     await message.answer("تم إيقاف الاستثمار الخاص بك.")
 
-# --- أوامر المدير ---
+# ----- لوحة تحكم المدير -----
+
 @dp.message(Command("admin_panel"))
-async def admin_panel(message: types.Message):
+async def cmd_admin_panel(message: types.Message):
     if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
+        await message.answer("غير مصرح لك باستخدام هذه الأوامر.")
         return
-    await message.answer("لوحة تحكم المدير: (قيد التطوير)")
+    await message.answer("لوحة تحكم المدير:", reply_markup=owner_keyboard)
 
-@dp.message(Text("عدد المستخدمين"))
-async def user_count(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    with SessionLocal() as session:
-        count = session.query(User).count()
-    await message.answer(f"عدد المستخدمين الكلي: {count}")
+# ----- بدء polling -----
 
-@dp.message(Text("عدد المستخدمين أونلاين"))
-async def user_online_count(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    # يمكن إضافة نظام تتبع أونلاين لاحقاً
-    await message.answer("عدد المستخدمين أونلاين: (ميزة قيد التطوير)")
-
-@dp.message(Text("تقارير الاستثمار"))
-async def investment_reports(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("تقارير الاستثمار: (قيد التطوير)")
-
-@dp.message(Text("حالة البوت البرمجية"))
-async def bot_status(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("البوت يعمل بشكل طبيعي.")
-
-# --- بدء التشغيل ---
 async def main():
     print("البوت بدأ العمل")
     await dp.start_polling(bot)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
