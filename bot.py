@@ -139,4 +139,72 @@ async def fake_investment(message: types.Message):
 
 @dp.message(Text("كشف حساب عن فترة"))
 async def account_statement(message: types.Message):
-    await message.answer("يرجى إد
+    await message.answer("يرجى إدخال تاريخ البداية (YYYY-MM-DD):")
+    # هنا يمكن تفعيل FSM لمتابعة تاريخ البداية والنهاية
+
+@dp.message(Text("حالة السوق"))
+async def market_status(message: types.Message):
+    await message.answer("تحليل السوق قيد التطوير...")
+
+@dp.message(Text("ايقاف الاستثمار"))
+async def stop_investment(message: types.Message):
+    with SessionLocal() as session:
+        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
+        if user:
+            user.is_active = False
+            session.commit()
+            await message.answer("تم إيقاف الاستثمار الخاص بك بنجاح.")
+        else:
+            await message.answer("لم يتم العثور على بيانات المستخدم.")
+
+@dp.message(Command("admin_panel"))
+async def cmd_admin_panel(message: types.Message):
+    if message.from_user.id == int(OWNER_ID):
+        await message.answer("لوحة تحكم المدير: هنا تضع أوامر الإدارة", reply_markup=owner_keyboard)
+    else:
+        await message.answer("غير مصرح لك باستخدام هذه الأوامر.")
+
+@dp.message(Text("تعديل نسبة ربح البوت"))
+async def edit_bot_profit(message: types.Message):
+    if message.from_user.id != int(OWNER_ID):
+        await message.answer("غير مصرح لك.")
+        return
+    await message.answer("ميزة تعديل نسبة الربح قيد التطوير...")
+
+@dp.message(Text("عدد المستخدمين"))
+async def user_count(message: types.Message):
+    if message.from_user.id != int(OWNER_ID):
+        await message.answer("غير مصرح لك.")
+        return
+    with SessionLocal() as session:
+        count = session.query(User).count()
+    await message.answer(f"عدد المستخدمين الإجمالي: {count}")
+
+@dp.message(Text("عدد المستخدمين أونلاين"))
+async def online_user_count(message: types.Message):
+    if message.from_user.id != int(OWNER_ID):
+        await message.answer("غير مصرح لك.")
+        return
+    # يمكنك تطبيق منطق حساب المستخدمين الأونلاين حسب توافر الجلسة أو حالة الاتصال
+    await message.answer("ميزة عد المستخدمين أونلاين قيد التطوير...")
+
+@dp.message(Text("تقارير الاستثمار"))
+async def investment_reports(message: types.Message):
+    if message.from_user.id != int(OWNER_ID):
+        await message.answer("غير مصرح لك.")
+        return
+    await message.answer("ميزة تقارير الاستثمار قيد التطوير...")
+
+@dp.message(Text("حالة البوت البرمجية"))
+async def bot_status(message: types.Message):
+    if message.from_user.id != int(OWNER_ID):
+        await message.answer("غير مصرح لك.")
+        return
+    await message.answer("البوت يعمل بدون أخطاء حتى الآن.")
+
+async def main():
+    print("البوت بدأ العمل")
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    asyncio.run(main())
