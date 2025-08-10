@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+  <body>
+    <h2>Dashboard</h2>
+    <h3>Users</h3>
+    <ul>
+    {% for u in users %}
+      <li>{{u.telegram_id}} — {{u.role}}</li>
+    {% endfor %}
+    </ul>
+    <h3>Recent Trades</h3>
+    <ul>
+    {% for t in trades %}
+      <li>{{t.created_at}} — {{t.exchange}} {{t.symbol}} {{t.side}} {{t.qty}} @ {{t.price}}</li>
+    {% endfor %}
+    </ul>
+  </body>
+</html>
