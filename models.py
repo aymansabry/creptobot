@@ -12,8 +12,8 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     api_keys = relationship('APIKey', back_populates='user')
     daily_loss_limit = Column(Float, default=0.0)
-    is_active = Column(Boolean, default=True)   # هل الاستثمار مفعّل
-    investment_amount = Column(Float, default=0.0)  # مبلغ الاستثمار المسموح به
+    is_active = Column(Boolean, default=True)
+    investment_amount = Column(Float, default=0.0)
 
 class APIKey(Base):
     __tablename__ = 'api_keys'
@@ -32,7 +32,7 @@ class TradeLog(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     exchange = Column(String(50))
-    side = Column(String(10))  # buy أو sell
+    side = Column(String(10))
     symbol = Column(String(50))
     qty = Column(Float)
     price = Column(Float)
