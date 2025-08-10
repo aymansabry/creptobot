@@ -1,51 +1,42 @@
-# bot.py
-import os, logging, asyncio
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from handlers import start, button_handler
-from handlers import get_user_by_telegram_id
-from database import init_pool, query
-from arbitrage import execute_arbitrage_for_user
-from notifications import send_admin_alert
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackContext
+from database import query, execute
 
-logging.basicConfig(level=logging.INFO)
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# بدء المحادثة
+def start(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    user_name = update.effective_user.username or update.effective_user.first_name
 
-# health check job
-def health_check():
-    try:
-        # quick DB query
-        r = query("SELECT 1 as ok", (), fetchone=True)
-        if not r:
-            send_admin_alert("Health Check Failed", "DB returned no response")
-    except Exception as e:
-        send_admin_alert("Health Check Error", str(e))
+    # حفظ المستخدم في قاعدة البيانات إذا لم يكن موجود
+    existing = query("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    if not existing:
+        execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (user_id, user_name))
 
-async def run_arbitrage_job():
-    users = query("SELECT * FROM users WHERE is_active=TRUE")
-    for u in users:
-        try:
-            execute_arbitrage_for_user(u)
-        except Exception as e:
-            logging.exception("user arbitrage fail %s", e)
-            send_admin_alert("Arbitrage loop error", str(e))
+    keyboard = [
+        [InlineKeyboardButton("📊 عرض الرصيد", callback_data="balance")],
+        [InlineKeyboardButton("⚙️ إعدادات API", callback_data="set_api")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-async def start_bot():
-    init_pool()
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    # other command handlers (defined in handlers module) should be added similarly
+    update.message.reply_text(
+        f"مرحباً {user_name} 👋\nاختر أحد الخيارات أدناه:",
+        reply_markup=reply_markup
+    )
 
-    # scheduler
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(health_check, 'interval', minutes=int(os.getenv("HEALTH_INTERVAL_MIN", "2")))
-    scheduler.add_job(lambda: asyncio.create_task(run_arbitrage_job()), 'interval', minutes=int(os.getenv("ARBITRAGE_INTERVAL_MIN", "5")))
-    scheduler.start()
+# التعامل مع الأزرار
+def button_handler(update: Update, context: CallbackContext):
+    query_data = update.callback_query
+    query_data.answer()
 
-    logging.info("Bot starting...")
-    await app.run_polling()
+    if query_data.data == "balance":
+        # استعلام عن الرصيد (كمثال)
+        user_id = query_data.from_user.id
+        balance = get_user_balance(user_id)
+        query_data.edit_message_text(f"💰 رصيدك الحالي: {balance} USDT")
+    elif query_data.data == "set_api":
+        query_data.edit_message_text("🔑 أرسل لي الـ API Key و Secret بالشكل التالي:\n`API_KEY,API_SECRET`")
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(start_bot())
+# دالة وهمية للحصول على الرصيد (تعدل لاحقاً لربط منصات التداول)
+def get_user_balance(user_id):
+    # مثال: نعيد قيمة ثابتة حالياً
+    return 100.0
