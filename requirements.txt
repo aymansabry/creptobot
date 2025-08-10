@@ -1,4 +1,4 @@
-aiogram==2.25.1
+aiogram==3.0.0b7
 Flask==2.3.2
 SQLAlchemy==2.0.19
 PyMySQL==1.1.0
