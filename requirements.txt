@@ -3,7 +3,7 @@ Flask==2.3.2
 SQLAlchemy==2.0.19
 PyMySQL==1.1.0
 python-dotenv==1.0.0
-cryptography==41.0.4
+cryptography>=40.0.0
 ccxt==3.0.67
 requests==2.31.0
 apscheduler==3.10.1
