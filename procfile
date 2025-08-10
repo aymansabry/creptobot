@@ -1,2 +1,0 @@
-web: python web_app/app.py
-worker: python bot.py
