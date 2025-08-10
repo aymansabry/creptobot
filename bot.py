@@ -10,25 +10,23 @@ create_tables()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command(commands=["start"]))
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("أهلاً! البوت يعمل بنجاح.")
+    await message.reply("أهلاً! البوت يعمل بنجاح.")
 
-@dp.message(Command(commands=["help"]))
+@dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    await message.answer("هذه أوامر البوت المتاحة:\n/start\n/help")
+    await message.reply("هذه أوامر البوت المتاحة:\n/start\n/help")
 
-@dp.message(lambda message: message.from_user.id == int(OWNER_ID))
+# رسالة خاصة للمالك
+@dp.message()
 async def owner_only(message: types.Message):
-    await message.answer("مرحباً مالك البوت!")
+    if message.from_user.id == int(OWNER_ID):
+        await message.reply("مرحباً مالك البوت!")
 
 async def main():
-    # تسجيل البوت
-    dp.include_router(dp)
-
     print("البوت بدأ العمل")
-    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
