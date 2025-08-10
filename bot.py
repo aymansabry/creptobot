@@ -4,7 +4,6 @@ from aiogram.filters import Command, Text
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.filters import StateFilter
 from sqlalchemy import and_
 from cryptography.fernet import Fernet, InvalidToken
 import ccxt
@@ -22,7 +21,7 @@ dp = Dispatcher()
 
 fernet = Fernet(FERNET_KEY.encode())
 
-# تعريف حالات FSM
+# تعريف الحالات للحوار (FSM)
 class InvestmentStates(StatesGroup):
     waiting_for_investment_amount = State()
 
@@ -42,8 +41,8 @@ owner_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="/help"), KeyboardButton(text="/admin_panel")],
         [KeyboardButton(text="تعديل نسبة ربح البوت"), KeyboardButton(text="عدد المستخدمين")],
         [KeyboardButton(text="عدد المستخدمين أونلاين"), KeyboardButton(text="تقارير الاستثمار")],
-        [KeyboardButton(text="حالة البوت البرمجية"), KeyboardButton(text="وضع الاستثمار الحقيقي")],
-        [KeyboardButton(text="تحويل لمود المستخدم"), KeyboardButton(text="تحويل لمود المدير")]
+        [KeyboardButton(text="حالة البوت البرمجية"), KeyboardButton(text="التحويل لوضع المدير")],
+        [KeyboardButton(text="التحويل لوضع المستخدم")]
     ],
     resize_keyboard=True
 )
@@ -77,6 +76,7 @@ async def cmd_help(message: types.Message):
 
 @dp.message(Text("تسجيل/تعديل بيانات التداول"))
 async def handle_api_key_entry(message: types.Message):
+    # حوارات تسجيل/تعديل مفاتيح API سيتم إضافتها هنا لاحقاً
     await message.answer("يرجى اختيار المنصة وإدخال مفاتيح API (لم يتم تنفيذها بعد).")
 
 @dp.message(Text("ابدأ استثمار"))
@@ -86,16 +86,18 @@ async def start_investment(message: types.Message, state: FSMContext):
         if not user:
             await message.answer("يجب تسجيل بيانات التداول أولاً عبر 'تسجيل/تعديل بيانات التداول'.")
             return
-        if not getattr(user, 'is_active', True):
+        if hasattr(user, "is_active") and not user.is_active:
             await message.answer("تم إيقاف الاستثمار الخاص بك، لا يمكنك البدء حالياً.")
             return
     await message.answer("أدخل مبلغ الاستثمار (مثلاً: 1000):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(InvestmentStates.waiting_for_investment_amount)
 
+# تصحيح: لا تستخدم ديكوريتور مع state=.. (غير مدعوم في aiogram 3.x)
+@dp.message()
 async def process_investment_amount(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state != InvestmentStates.waiting_for_investment_amount.state:
-        return
+        return  # نتجاهل الرسائل غير في الحالة المطلوبة
 
     try:
         amount = float(message.text.strip())
@@ -112,6 +114,7 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
             await state.clear()
             return
 
+        # تحقق الرصيد - يمكن هنا إضافة تحقق حقيقي لاحقاً
         user.investment_amount = amount
         user.is_active = True
         session.commit()
@@ -119,47 +122,77 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     await message.answer(f"تم تعيين مبلغ الاستثمار: {amount} بنجاح.\nيتم الآن بدء الاستثمار الآلي...")
     await state.clear()
 
-    # تشغيل الاستثمار الحقيقي
-    await run_real_investment(user)
+    await run_investment_for_user(user)
 
-async def run_real_investment(user: User):
-    # مثال بسيط على عملية الاستثمار، يجب ربطه بآليات التداول الحقيقية
+async def run_investment_for_user(user: User):
     with SessionLocal() as session:
         api_keys = session.query(APIKey).filter(
             APIKey.user_id == user.id,
             APIKey.is_active == True
         ).all()
 
-    if not api_keys:
-        await bot.send_message(user.telegram_id, "لا توجد مفاتيح API مفعلة للاستثمار.")
-        return
+    for key in api_keys:
+        exchange_name = key.exchange
+        api_key = safe_decrypt(key.api_key_encrypted)
+        api_secret = safe_decrypt(key.api_secret_encrypted)
+        passphrase = safe_decrypt(key.passphrase_encrypted) if key.passphrase_encrypted else None
 
-    # هنا يمكنك تنفيذ استراتيجية المراجحة أو التداول الفعلي باستخدام ccxt ومفاتيح API
-    await bot.send_message(user.telegram_id, "تم بدء الاستثمار الحقيقي باستخدام مفاتيح API الخاصة بك.")
+        if not api_key or not api_secret:
+            continue
 
-@dp.message(Text("وضع الاستثمار الحقيقي"))
-async def set_real_investment_mode(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك باستخدام هذه الميزة.")
-        return
-    await message.answer("تم تفعيل وضع الاستثمار الحقيقي. الآن يمكنك مراقبة وتنفيذ الاستثمارات الحقيقية.")
+        try:
+            exchange_class = getattr(ccxt, exchange_name)
+            exchange = exchange_class({
+                'apiKey': api_key,
+                'secret': api_secret,
+                'password': passphrase,
+                'enableRateLimit': True,
+            })
 
-@dp.message(Text("تحويل لمود المستخدم"))
-async def switch_to_user_mode(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك باستخدام هذه الميزة.")
-        return
-    await message.answer("تم التحويل إلى وضع المستخدم.")
+            # اختبار الاتصال بالبورصة
+            await asyncio.to_thread(exchange.load_markets)
 
-@dp.message(Text("تحويل لمود المدير"))
-async def switch_to_owner_mode(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك باستخدام هذه الميزة.")
-        return
-    await message.answer("تم التحويل إلى وضع المدير.")
+            # مثال تنفيذ أمر شراء وبيع (مراجحة)
+            # هذا مثال بسيط جدا للتوضيح، يجب استبداله بخوارزمية فعلية
+            symbol = 'BTC/USDT'
+            amount = 0.001  # كمية صغيرة للتجربة
 
-# تسجيل الهاندلر مع فلتر الحالة خارج الديكوريتور
-dp.message.register(process_investment_amount, StateFilter(InvestmentStates.waiting_for_investment_amount))
+            buy_order = await asyncio.to_thread(exchange.create_market_buy_order, symbol, amount)
+            sell_order = await asyncio.to_thread(exchange.create_market_sell_order, symbol, amount)
+
+            # حفظ العمليات في سجل التداول
+            with SessionLocal() as session:
+                log = TradeLog(
+                    user_id=user.id,
+                    exchange=exchange_name,
+                    side='buy',
+                    symbol=symbol,
+                    qty=amount,
+                    price=buy_order['price'] if 'price' in buy_order else 0,
+                    profit=0,
+                    raw=str(buy_order),
+                    status='OK',
+                    created_at=datetime.datetime.utcnow()
+                )
+                session.add(log)
+                session.commit()
+
+        except Exception as e:
+            print(f"خطأ في تنفيذ أمر على {exchange_name} للمستخدم {user.telegram_id}: {e}")
+
+@dp.message(Text("التحويل لوضع المدير"))
+async def switch_to_admin(message: types.Message):
+    if message.from_user.id == int(OWNER_ID):
+        await message.answer("تم التبديل إلى وضع المدير.", reply_markup=owner_keyboard)
+    else:
+        await message.answer("غير مصرح لك باستخدام هذا الأمر.")
+
+@dp.message(Text("التحويل لوضع المستخدم"))
+async def switch_to_user(message: types.Message):
+    if message.from_user.id == int(OWNER_ID):
+        await message.answer("تم التبديل إلى وضع المستخدم.", reply_markup=user_keyboard)
+    else:
+        await message.answer("غير مصرح لك باستخدام هذا الأمر.")
 
 async def main():
     print("البوت بدأ العمل")
