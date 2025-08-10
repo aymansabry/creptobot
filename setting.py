@@ -1,15 +1,18 @@
-# settings.py
-from database import query, execute
+import os
+from dotenv import load_dotenv
 
-def get_setting(key, default=None):
-    r = query("SELECT setting_value FROM settings WHERE setting_key=%s", (key,), fetchone=True)
-    if r:
-        return r['setting_value']
-    return default
+# تحميل متغيرات البيئة من ملف .env
+load_dotenv()
 
-def set_setting(key, value):
-    existing = query("SELECT id FROM settings WHERE setting_key=%s", (key,), fetchone=True)
-    if existing:
-        execute("UPDATE settings SET setting_value=%s WHERE setting_key=%s", (value, key))
-    else:
-        execute("INSERT INTO settings (setting_key, setting_value) VALUES (%s, %s)", (key, value))
+# توكن البوت من تيليجرام
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# إعدادات قاعدة البيانات
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "mydatabase")
+
+# إعدادات الويب
+WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
+WEB_PORT = int(os.getenv("WEB_PORT", 5000))
