@@ -2,11 +2,11 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Text
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.filters import StateFilter
+from aiogram.fsm.context import FSMContext
 from sqlalchemy import and_
 from cryptography.fernet import Fernet, InvalidToken
+import ccxt
 import datetime
 
 from database import create_tables, SessionLocal
@@ -21,6 +21,7 @@ dp = Dispatcher()
 
 fernet = Fernet(FERNET_KEY.encode())
 
+# تعريف حالات FSM
 class InvestmentStates(StatesGroup):
     waiting_for_investment_amount = State()
 
@@ -74,8 +75,7 @@ async def cmd_help(message: types.Message):
 
 @dp.message(Text("تسجيل/تعديل بيانات التداول"))
 async def handle_api_key_entry(message: types.Message):
-    # هنا تبدأ حوارات تسجيل/تعديل مفاتيح API - تحتاج إضافة منطقك هنا
-    await message.answer("يرجى اختيار المنصة وإدخال مفاتيح API (قيد التطوير).")
+    await message.answer("يرجى اختيار المنصة وإدخال مفاتيح API (لم يتم تنفيذها بعد).")
 
 @dp.message(Text("ابدأ استثمار"))
 async def start_investment(message: types.Message, state: FSMContext):
@@ -84,13 +84,13 @@ async def start_investment(message: types.Message, state: FSMContext):
         if not user:
             await message.answer("يجب تسجيل بيانات التداول أولاً عبر 'تسجيل/تعديل بيانات التداول'.")
             return
-        if not user.is_active:
+        if not getattr(user, "is_active", True):
             await message.answer("تم إيقاف الاستثمار الخاص بك، لا يمكنك البدء حالياً.")
             return
     await message.answer("أدخل مبلغ الاستثمار (مثلاً: 1000):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(InvestmentStates.waiting_for_investment_amount)
 
-@dp.message(StateFilter(InvestmentStates.waiting_for_investment_amount))
+@dp.message(state=InvestmentStates.waiting_for_investment_amount)
 async def process_investment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text.strip())
@@ -107,7 +107,7 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
             await state.clear()
             return
 
-        # تحديث مبلغ الاستثمار وتفعيل المستخدم
+        # تحقق الرصيد (مبسط حاليا)
         user.investment_amount = amount
         user.is_active = True
         session.commit()
@@ -115,92 +115,33 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     await message.answer(f"تم تعيين مبلغ الاستثمار: {amount} بنجاح.\nيتم الآن بدء الاستثمار الآلي...")
     await state.clear()
 
-    # استدعاء دالة تنفيذ الاستثمار (تحتاج بناء هذه الدالة)
+    # تابع الاستثمار - يمكن تعديل هذا لتكامل مع المنطق الحقيقي للاستثمار
     await run_investment_for_user(user)
 
 async def run_investment_for_user(user: User):
-    # هذه الدالة مثال مبدئي يجب استكمالها حسب منطق الاستثمار الفعلي
+    # هنا تضع منطق الاستثمار الفعلي لكل APIKey مرتبط بالمستخدم
     with SessionLocal() as session:
         api_keys = session.query(APIKey).filter(
             APIKey.user_id == user.id,
             APIKey.is_active == True
         ).all()
 
-    # هنا تقوم بالتعامل مع مفاتيح API وبدء عملية المراجحة أو الاستثمار
     for key in api_keys:
-        exchange_name = key.exchange
-        # تنفيذ تداولات أو استدعاء API تبعًا للمنصة
-
-    # يمكنك إضافة لوجيك تسجيل التداولات في TradeLog
-
-@dp.message(Text("استثمار وهمي"))
-async def fake_investment(message: types.Message):
-    await message.answer("ميزة الاستثمار الوهمي قيد التطوير...")
-
-@dp.message(Text("كشف حساب عن فترة"))
-async def account_statement(message: types.Message):
-    await message.answer("يرجى إدخال تاريخ البداية (YYYY-MM-DD):")
-    # هنا يمكن تفعيل FSM لمتابعة تاريخ البداية والنهاية
-
-@dp.message(Text("حالة السوق"))
-async def market_status(message: types.Message):
-    await message.answer("تحليل السوق قيد التطوير...")
-
-@dp.message(Text("ايقاف الاستثمار"))
-async def stop_investment(message: types.Message):
-    with SessionLocal() as session:
-        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if user:
-            user.is_active = False
-            session.commit()
-            await message.answer("تم إيقاف الاستثمار الخاص بك بنجاح.")
-        else:
-            await message.answer("لم يتم العثور على بيانات المستخدم.")
-
-@dp.message(Command("admin_panel"))
-async def cmd_admin_panel(message: types.Message):
-    if message.from_user.id == int(OWNER_ID):
-        await message.answer("لوحة تحكم المدير: هنا تضع أوامر الإدارة", reply_markup=owner_keyboard)
-    else:
-        await message.answer("غير مصرح لك باستخدام هذه الأوامر.")
-
-@dp.message(Text("تعديل نسبة ربح البوت"))
-async def edit_bot_profit(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("ميزة تعديل نسبة الربح قيد التطوير...")
-
-@dp.message(Text("عدد المستخدمين"))
-async def user_count(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    with SessionLocal() as session:
-        count = session.query(User).count()
-    await message.answer(f"عدد المستخدمين الإجمالي: {count}")
-
-@dp.message(Text("عدد المستخدمين أونلاين"))
-async def online_user_count(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    # يمكنك تطبيق منطق حساب المستخدمين الأونلاين حسب توافر الجلسة أو حالة الاتصال
-    await message.answer("ميزة عد المستخدمين أونلاين قيد التطوير...")
-
-@dp.message(Text("تقارير الاستثمار"))
-async def investment_reports(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("ميزة تقارير الاستثمار قيد التطوير...")
-
-@dp.message(Text("حالة البوت البرمجية"))
-async def bot_status(message: types.Message):
-    if message.from_user.id != int(OWNER_ID):
-        await message.answer("غير مصرح لك.")
-        return
-    await message.answer("البوت يعمل بدون أخطاء حتى الآن.")
+        # مثال: استدعاء exchange من ccxt
+        try:
+            api_key = safe_decrypt(key.api_key_encrypted)
+            api_secret = safe_decrypt(key.api_secret_encrypted)
+            exchange_name = key.exchange.lower()
+            exchange_class = getattr(ccxt, exchange_name)
+            exchange = exchange_class({
+                'apiKey': api_key,
+                'secret': api_secret,
+                'enableRateLimit': True,
+            })
+            # تنفيذ عمليات المراجحة هنا (مثال فقط)
+            # ...
+        except Exception as e:
+            print(f"Error with exchange {key.exchange}: {e}")
 
 async def main():
     print("البوت بدأ العمل")
