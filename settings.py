@@ -9,9 +9,14 @@ OWNER_ID = os.getenv("OWNER_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 FERNET_KEY = os.getenv("FERNET_KEY")
 
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN missing in environment variables")
+
+if not OWNER_ID:
+    raise RuntimeError("OWNER_ID missing in environment variables")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL missing in environment variables")
+
 if not FERNET_KEY:
-    raise RuntimeError("FERNET_KEY missing in .env — generate with cryptography.Fernet.generate_key()")
-
-fernet = Fernet(FERNET_KEY.encode())
-
-MODE = os.getenv("MODE", "production")  # للإعدادات المختلفة إذا لزم الأمر
+    raise RuntimeError("FERNET_KEY missing in environment variables — generate with cryptography.Fernet.generate_key()")
