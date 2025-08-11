@@ -7,7 +7,7 @@ import enum
 import logging
 from typing import Optional, List, Dict, Any
 from cryptography.fernet import Fernet
-from datetime import datetime
+from datetime import datetime, timedelta
 import ccxt
 
 # إعدادات التسجيل
@@ -148,7 +148,10 @@ class Database:
         """الحصول على بيانات مستخدم"""
         session = self.Session()
         try:
-            return session.query(User).filter_by(telegram_id=telegram_id).first()
+            user = session.query(User).filter_by(telegram_id=telegram_id).first()
+            if not user:
+                logger.warning(f"المستخدم {telegram_id} غير موجود")
+            return user
         except Exception as e:
             logger.error(f"خطأ في جلب المستخدم: {e}")
             return None
@@ -159,6 +162,12 @@ class Database:
         """إضافة مستخدم جديد"""
         session = self.Session()
         try:
+            # تعيين القيم الافتراضية إذا لم يتم توفيرها
+            user_data.setdefault('balance', 0.0)
+            user_data.setdefault('demo_balance', 10000.0)
+            user_data.setdefault('is_active', True)
+            user_data.setdefault('mode', 'demo')
+            
             user = User(**user_data)
             session.add(user)
             session.commit()
@@ -216,7 +225,7 @@ class Database:
 
             connection = ExchangeConnection(
                 user_id=user_id,
-                platform=platform,
+                platform=ExchangePlatform(platform.lower()),
                 api_key=self.encrypt(api_key),
                 api_secret=self.encrypt(api_secret),
                 passphrase=self.encrypt(passphrase) if passphrase else None,
