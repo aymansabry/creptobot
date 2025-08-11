@@ -1,32 +1,46 @@
-import os
+# bot.py
 import asyncio
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
+import logging
+import os
 from dotenv import load_dotenv
-from db import init_db
-from handlers import register_handlers
 
 load_dotenv()
+from aiogram import Bot, Dispatcher
+from aiogram.client.bot import DefaultBotProperties
+from aiogram.fsm.storage.memory import MemoryStorage
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+from database import init_db
+from handlers import router
+from trading import start_background_tasks
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+logging.basicConfig(level=LOG_LEVEL)
+logger = logging.getLogger(__name__)
+
+if not TELEGRAM_BOT_TOKEN:
+    logger.error("Missing TELEGRAM_BOT_TOKEN in environment.")
+    raise SystemExit("Set TELEGRAM_BOT_TOKEN in env")
 
 async def main():
-    if not BOT_TOKEN:
-        raise ValueError("❌ متغير TELEGRAM_BOT_TOKEN غير موجود في .env")
-
-    # إنشاء البوت والمخزن
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
-    dp = Dispatcher(storage=MemoryStorage())
-
-    # تهيئة قاعدة البيانات (إنشاء الجداول لو مش موجودة)
+    # 1) إنشاء الجداول إذا غير موجودة
     init_db()
 
-    # تسجيل جميع الهاندلرز
-    register_handlers(dp)
+    # 2) بوت ودي سباتشر
+    bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
+    dp.include_router(router)
 
-    print("✅ البوت يعمل الآن...")
-    await dp.start_polling(bot)
+    # 3) ابدأ الخلفيات (مراجحة + تحديث رصيد دوري)
+    start_background_tasks(bot)
+
+    logger.info("Bot starting polling...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
