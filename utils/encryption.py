@@ -1,38 +1,19 @@
-from cryptography.fernet import Fernet
+# utils/encryption.py
 import os
+from cryptography.fernet import Fernet
 
-# تحميل أو إنشاء مفتاح التشفير
-SECRET_KEY_FILE = "secret.key"
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+if not ENCRYPTION_KEY:
+    raise SystemExit("ENCRYPTION_KEY missing in env. Generate with Fernet.generate_key().decode()")
 
-def load_or_create_key():
-    """
-    يقوم بتحميل مفتاح التشفير إذا كان موجود، أو إنشاؤه إذا لم يكن موجود.
-    """
-    if os.path.exists(SECRET_KEY_FILE):
-        with open(SECRET_KEY_FILE, "rb") as key_file:
-            return key_file.read()
-    else:
-        key = Fernet.generate_key()
-        with open(SECRET_KEY_FILE, "wb") as key_file:
-            key_file.write(key)
-        return key
+fernet = Fernet(ENCRYPTION_KEY.encode())
 
-# مفتاح التشفير
-SECRET_KEY = load_or_create_key()
-fernet = Fernet(SECRET_KEY)
-
-def encrypt_data(data: str) -> str:
-    """
-    تشفير النصوص (مثل مفاتيح API)
-    """
-    if not data:
+def encrypt_text(plain: str) -> str:
+    if plain is None:
         return None
-    return fernet.encrypt(data.encode()).decode()
+    return fernet.encrypt(plain.encode()).decode()
 
-def decrypt_data(token: str) -> str:
-    """
-    فك التشفير للنصوص
-    """
-    if not token:
+def decrypt_text(token: str) -> str:
+    if token is None:
         return None
     return fernet.decrypt(token.encode()).decode()
