@@ -1,3 +1,4 @@
+from typing import Optional, List
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Enum, Text, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -41,7 +42,7 @@ class ExchangeConnection(Base):
     platform = Column(Enum(ExchangePlatform), nullable=False)
     api_key = Column(Text, nullable=False)
     api_secret = Column(Text, nullable=False)
-    passphrase = Column(Text)  # لبعض المنصات مثل KuCoin
+    passphrase = Column(Text)
     is_valid = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
@@ -62,7 +63,6 @@ class Database:
                 }
             )
             
-            # إصلاح مشكلة MySQL مع TIMESTAMP
             with self.engine.connect() as conn:
                 conn.execute(text("SET SESSION sql_mode='ALLOW_INVALID_DATES';"))
                 conn.commit()
