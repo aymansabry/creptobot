@@ -1,97 +1,130 @@
-import asyncio
-from aiogram import Router, F, types
+import datetime
+from aiogram import Router, F
+from aiogram.types import Message
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from db import get_session, User
-from market import analyze_market
-from trading import start_trading_for_user
+from sqlalchemy.orm import Session
+from cryptography.fernet import Fernet
+from database import SessionLocal
+from models import User
+from trading import encrypt_value, decrypt_value, analyze_market, start_trading
 
 router = Router()
 
-class InvestState(StatesGroup):
-    enter_amount = State()
-    enter_binance_keys = State()
-    enter_kucoin_keys = State()
+# مفتاح التشفير (يُفضل وضعه في env)
+FERNET_KEY = Fernet.generate_key()
+fernet = Fernet(FERNET_KEY)
 
-@router.message(Command("start"))
-async def cmd_start(message: types.Message):
-    session = get_session()
-    user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
+# ربط منصة Binance
+@router.message(Command("link_binance"))
+async def link_binance(message: Message):
+    await message.answer("🔑 أرسل لي API Key لـ Binance:")
+    await router.data.update({"awaiting_binance_key": True})
+
+@router.message(F.text & (lambda msg, ctx=router.data: ctx.get("awaiting_binance_key")))
+async def binance_key_received(message: Message):
+    router.data["binance_key"] = message.text
+    router.data["awaiting_binance_key"] = False
+    await message.answer("🔐 أرسل لي Secret Key لـ Binance:")
+    router.data["awaiting_binance_secret"] = True
+
+@router.message(F.text & (lambda msg, ctx=router.data: ctx.get("awaiting_binance_secret")))
+async def binance_secret_received(message: Message):
+    binance_key = router.data.pop("binance_key")
+    binance_secret = message.text
+    router.data["awaiting_binance_secret"] = False
+
+    db: Session = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
     if not user:
         user = User(telegram_id=message.from_user.id)
-        session.add(user)
-        session.commit()
-        await message.answer("👋 أهلاً! تم إنشاء حسابك في النظام.")
-    await message.answer("اختر من القائمة:\n- ربط حساب Binance\n- ربط حساب KuCoin\n- بدء الاستثمار\n- حالة السوق")
+        db.add(user)
 
-@router.message(Command("link_binance"))
-async def link_binance(message: types.Message, state: FSMContext):
-    await state.set_state(InvestState.enter_binance_keys)
-    await message.answer("🔑 أرسل API Key و Secret لـ Binance بهذا الشكل:\n`API_KEY|SECRET`")
+    user.binance_api_key = encrypt_value(binance_key)
+    user.binance_api_secret = encrypt_value(binance_secret)
+    db.commit()
+    db.close()
 
-@router.message(InvestState.enter_binance_keys)
-async def save_binance_keys(message: types.Message, state: FSMContext):
-    try:
-        api_key, api_secret = message.text.strip().split("|")
-        session = get_session()
-        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if user:
-            user.set_binance_keys(api_key, api_secret)
-            session.commit()
-            await message.answer("✅ تم حفظ بيانات Binance بنجاح.")
-        await state.clear()
-    except:
-        await message.answer("❌ صيغة غير صحيحة. أعد المحاولة.")
+    await message.answer("✅ تم ربط حساب Binance بنجاح.")
 
+# ربط منصة KuCoin
 @router.message(Command("link_kucoin"))
-async def link_kucoin(message: types.Message, state: FSMContext):
-    await state.set_state(InvestState.enter_kucoin_keys)
-    await message.answer("🔑 أرسل API Key و Secret و Passphrase لـ KuCoin بهذا الشكل:\n`API_KEY|SECRET|PASSPHRASE`")
+async def link_kucoin(message: Message):
+    await message.answer("🔑 أرسل لي API Key لـ KuCoin:")
+    router.data["awaiting_kucoin_key"] = True
 
-@router.message(InvestState.enter_kucoin_keys)
-async def save_kucoin_keys(message: types.Message, state: FSMContext):
+@router.message(F.text & (lambda msg, ctx=router.data: ctx.get("awaiting_kucoin_key")))
+async def kucoin_key_received(message: Message):
+    router.data["kucoin_key"] = message.text
+    router.data["awaiting_kucoin_key"] = False
+    await message.answer("🔐 أرسل لي Secret Key لـ KuCoin:")
+    router.data["awaiting_kucoin_secret"] = True
+
+@router.message(F.text & (lambda msg, ctx=router.data: ctx.get("awaiting_kucoin_secret")))
+async def kucoin_secret_received(message: Message):
+    kucoin_key = router.data.pop("kucoin_key")
+    kucoin_secret = message.text
+    router.data["awaiting_kucoin_secret"] = False
+
+    db: Session = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+    if not user:
+        user = User(telegram_id=message.from_user.id)
+        db.add(user)
+
+    user.kucoin_api_key = encrypt_value(kucoin_key)
+    user.kucoin_api_secret = encrypt_value(kucoin_secret)
+    db.commit()
+    db.close()
+
+    await message.answer("✅ تم ربط حساب KuCoin بنجاح.")
+
+# عرض حالة السوق
+@router.message(Command("market_status"))
+async def market_status(message: Message):
+    analysis = analyze_market()
+    await message.answer(f"📊 **تحليل السوق الحالي:**\n\n{analysis}", parse_mode="Markdown")
+
+# عرض الرصيد والأرباح
+@router.message(Command("portfolio"))
+async def portfolio(message: Message):
+    db: Session = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+    db.close()
+
+    if not user:
+        await message.answer("⚠️ لم تبدأ الاستثمار بعد.")
+        return
+
+    await message.answer(
+        f"💰 رصيدك الحالي: {user.balance:.2f}$\n"
+        f"📈 أرباحك الإجمالية: {user.profits:.2f}$"
+    )
+
+# بدء الاستثمار
+@router.message(Command("start_trading"))
+async def start_trading_cmd(message: Message):
+    await message.answer("💵 أدخل المبلغ الذي تريد استثماره:")
+    router.data["awaiting_invest_amount"] = True
+
+@router.message(F.text & (lambda msg, ctx=router.data: ctx.get("awaiting_invest_amount")))
+async def invest_amount_received(message: Message):
     try:
-        api_key, api_secret, passphrase = message.text.strip().split("|")
-        session = get_session()
-        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if user:
-            user.set_kucoin_keys(api_key, api_secret, passphrase)
-            session.commit()
-            await message.answer("✅ تم حفظ بيانات KuCoin بنجاح.")
-        await state.clear()
-    except:
-        await message.answer("❌ صيغة غير صحيحة. أعد المحاولة.")
-
-@router.message(Command("invest"))
-async def invest(message: types.Message, state: FSMContext):
-    await state.set_state(InvestState.enter_amount)
-    await message.answer("💰 أدخل مبلغ الاستثمار (بالدولار)")
-
-@router.message(InvestState.enter_amount)
-async def save_investment_amount(message: types.Message, state: FSMContext):
-    try:
-        amount = float(message.text.strip())
-        session = get_session()
-        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if user:
-            user.balance = amount
-            user.profit = 0
-            session.commit()
-            await message.answer(f"✅ تم بدء الاستثمار بمبلغ {amount}$.\n🚀 جاري تشغيل التداول...")
-            asyncio.create_task(start_trading_for_user(user.telegram_id))
-        await state.clear()
-    except:
+        amount = float(message.text)
+    except ValueError:
         await message.answer("❌ أدخل رقم صحيح.")
+        return
 
-@router.message(Command("market"))
-async def market_status(message: types.Message):
-    status = await analyze_market()
-    await message.answer(f"📊 **حالة السوق الحالية:**\n{status}", parse_mode="Markdown")
+    router.data["awaiting_invest_amount"] = False
 
-@router.message(Command("balance"))
-async def check_balance(message: types.Message):
-    session = get_session()
-    user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
-    if user:
-        await message.answer(f"💰 رصيدك: {user.balance}$\n📈 أرباحك: {user.profit}$\nإجمالي: {user.balance + user.profit}$")
+    db: Session = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+    if not user:
+        user = User(telegram_id=message.from_user.id, balance=amount)
+        db.add(user)
+    else:
+        user.balance += amount
+    db.commit()
+    db.close()
+
+    await message.answer(f"✅ تم إضافة {amount}$ لرصيدك.\n🤖 جاري بدء التداول ...")
+    await start_trading(message.from_user.id)
