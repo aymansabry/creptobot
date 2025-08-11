@@ -1,7 +1,7 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from db import get_user_by_telegram_id, get_all_live_users
+from db import get_user_by_telegram_id, fetch_live_users
 from arbitrage import arbitrage_loop_all_users
 from security import decrypt_api_key
 import logging
