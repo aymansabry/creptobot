@@ -84,9 +84,9 @@ class ArbitrageEngine:
 
     async def execute_trade(
         self,
-        opportunity: Dict[str, Union[float, str]]],
+        opportunity: Dict[str, Union[float, str]],
         amount: float,
-        credentials: Dict[str, Dict[str, str]]],
+        credentials: Dict[str, Dict[str, str]],
         retry_count: int = 0
     ) -> Dict[str, Any]:
         """
@@ -157,7 +157,7 @@ class ArbitrageEngine:
     async def monitor_market(
         self,
         symbols: list,
-        credentials: Dict[str, Dict[str, str]]],
+        credentials: Dict[str, Dict[str, str]],
         callback: callable
     ) -> None:
         """
