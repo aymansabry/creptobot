@@ -1,7 +1,0 @@
-aiogram
-aiomysql
-httpx
-cryptography
-python-dotenv
-sqlalchemy
-openai
