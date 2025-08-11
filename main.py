@@ -16,10 +16,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# تهيئة البوت
-bot = Bot(token=Config.USER_BOT_TOKEN, parse_mode="HTML")
-dp = Dispatcher(bot, storage=MemoryStorage())
-db = Database()
+# تعريف المتغيرات الأساسية
+bot = None
+dp = None
+db = None
+
+def initialize_bot():
+    global bot, dp, db
+    bot = Bot(token=Config.USER_BOT_TOKEN, parse_mode="HTML")
+    dp = Dispatcher(bot, storage=MemoryStorage())
+    db = Database()
 
 # حالات المستخدم
 class UserStates(StatesGroup):
@@ -102,62 +108,6 @@ async def start(message: types.Message):
         logger.error(f"Error in /start command: {e}")
         await message.answer("❌ حدث خطأ أثناء معالجة طلبك، يرجى المحاولة لاحقاً")
 
-@dp.message_handler(text="📊 بيانات التداول")
-async def trading_data(message: types.Message):
-    """عرض خيارات بيانات التداول"""
-    try:
-        keyboard = types.InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            types.InlineKeyboardButton("➕ ربط منصة جديدة", callback_data="connect_exchange"),
-            types.InlineKeyboardButton("⚙️ إدارة المنصات", callback_data="manage_exchanges"),
-            types.InlineKeyboardButton("👛 رصيد المحفظة", callback_data="wallet_balance")
-        )
-        await message.answer("إدارة بيانات التداول:", reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error in trading_data: {e}")
-        await message.answer("❌ حدث خطأ في عرض خيارات التداول")
-
-@dp.callback_query_handler(lambda c: c.data == "connect_exchange")
-async def connect_exchange(callback: types.CallbackQuery):
-    """بدء عملية ربط منصة تداول جديدة"""
-    try:
-        keyboard = types.InlineKeyboardMarkup()
-        for platform in ExchangePlatform:
-            keyboard.add(types.InlineKeyboardButton(
-                text=platform.value.upper(),
-                callback_data=f"select_{platform.value}"
-            ))
-        await callback.message.edit_text("اختر المنصة لربطها:", reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error in connect_exchange: {e}")
-        await callback.answer("❌ حدث خطأ في عرض خيارات المنصات")
-
-@dp.callback_query_handler(lambda c: c.data.startswith("select_"))
-async def select_exchange(callback: types.CallbackQuery, state: FSMContext):
-    """اختيار منصة التداول"""
-    try:
-        platform = callback.data.split("_")[1]
-        async with state.proxy() as data:
-            data['platform'] = platform
-        await UserStates.waiting_api_key.set()
-        await callback.message.edit_text(f"أدخل مفتاح API لـ {platform.upper()}:")
-    except Exception as e:
-        logger.error(f"Error in select_exchange: {e}")
-        await callback.answer("❌ حدث خطأ في اختيار المنصة")
-
-@dp.message_handler(state=UserStates.waiting_api_key)
-async def process_api_key(message: types.Message, state: FSMContext):
-    """معالجة مفتاح API"""
-    try:
-        async with state.proxy() as data:
-            data['api_key'] = message.text
-        await UserStates.next()
-        await message.answer("أدخل السر السري (API Secret):")
-    except Exception as e:
-        logger.error(f"Error in process_api_key: {e}")
-        await message.answer("❌ حدث خطأ في معالجة المفتاح")
-        await state.finish()
-
 async def set_bot_commands():
     """تعيين أوامر البوت"""
     commands = [
@@ -168,6 +118,9 @@ async def set_bot_commands():
 
 if __name__ == '__main__':
     from aiogram import executor
+    
+    # تهيئة البوت
+    initialize_bot()
     
     # تنظيف أي عمليات معلقة
     loop = asyncio.get_event_loop()
