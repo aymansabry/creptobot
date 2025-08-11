@@ -118,4 +118,94 @@ async def cancel_open_orders_kucoin(api_key, api_secret, api_passphrase, symbol=
                 cancel_headers = {
                     "KC-API-KEY": api_key,
                     "KC-API-SIGN": cancel_signature,
-                    "KC-API-TIMESTAMP
+                    "KC-API-TIMESTAMP": cancel_timestamp,
+                    "KC-API-PASSPHRASE": api_passphrase,
+                    "Content-Type": "application/json"
+                }
+                await client.delete(KUCOIN_BASE_URL + cancel_endpoint, headers=cancel_headers)
+
+async def send_telegram_message(bot, user_id, text):
+    try:
+        await bot.send_message(user_id, text)
+    except Exception as e:
+        print(f"Failed to send message to {user_id}: {e}")
+
+async def check_stop_loss(user_data, bot):
+    investment = user_data['investment_amount']
+    total_pnl = user_data.get('total_profit_loss', 0)
+    if total_pnl / investment < -MAX_DRAWDOWN_PERCENT:
+        await send_telegram_message(bot, user_data['telegram_id'], 
+            "⚠️ تم إيقاف التداول تلقائيًا بسبب تجاوز حد الخسارة المسموح به.")
+        # يمكن هنا تحديث حالة المستخدم في DB لمنع التداول
+        return True
+    return False
+
+async def arbitrage_for_user(bot, user_data):
+    if await check_stop_loss(user_data, bot):
+        return
+
+    binance_price = await get_binance_price()
+    kucoin_price = await get_kucoin_price()
+    diff = (binance_price - kucoin_price) / kucoin_price
+
+    print(f"{datetime.now()} | User {user_data['telegram_id']} | Binance: {binance_price}, KuCoin: {kucoin_price}, Diff: {diff:.4f}")
+
+    qty = user_data['investment_amount'] / min(binance_price, kucoin_price)
+
+    # فك تشفير مفاتيح API
+    binance_api_key = decrypt_api_key(user_data['binance_api_key'])
+    binance_secret_key = decrypt_api_key(user_data['binance_secret_key'])
+    kucoin_api_key = decrypt_api_key(user_data['kucoin_api_key'])
+    kucoin_secret_key = decrypt_api_key(user_data['kucoin_secret_key'])
+    kucoin_passphrase = decrypt_api_key(user_data['kucoin_passphrase'])
+
+    if diff > ARBITRAGE_THRESHOLD:
+        buy_resp = await kucoin_market_order_create(
+            kucoin_api_key, kucoin_secret_key, kucoin_passphrase,
+            'buy', 'BTC-USDT', qty
+        )
+        sell_resp = await binance_market_order(
+            binance_api_key, binance_secret_key, 'SELL', 'BTCUSDT', qty
+        )
+        profit_loss = (binance_price - kucoin_price) * qty
+        await update_user_balance(user_data['telegram_id'], profit_loss)
+        await send_telegram_message(bot, user_data['telegram_id'], f"تم تنفيذ مراجحة: شراء من KuCoin وبيع في Binance\\nالربح المتوقع: {profit_loss:.6f} USD")
+
+    elif diff < -ARBITRAGE_THRESHOLD:
+        buy_resp = await binance_market_order(
+            binance_api_key, binance_secret_key, 'BUY', 'BTCUSDT', qty
+        )
+        sell_resp = await kucoin_market_order_create(
+            kucoin_api_key, kucoin_secret_key, kucoin_passphrase,
+            'sell', 'BTC-USDT', qty
+        )
+        profit_loss = (kucoin_price - binance_price) * qty
+        await update_user_balance(user_data['telegram_id'], profit_loss)
+        await send_telegram_message(bot, user_data['telegram_id'], f"تم تنفيذ مراجحة: شراء من Binance وبيع في KuCoin\\nالربح المتوقع: {profit_loss:.6f} USD")
+
+    else:
+        print("لا توجد فرصة مراجحة مناسبة الآن.")
+
+    await cancel_open_orders_binance(binance_api_key, binance_secret_key)
+    await cancel_open_orders_kucoin(kucoin_api_key, kucoin_secret_key, kucoin_passphrase)
+
+async def arbitrage_loop_all_users(bot):
+    while True:
+        users = await fetch_live_users()
+        tasks = [arbitrage_for_user(bot, user) for user in users]
+        await asyncio.gather(*tasks)
+        await asyncio.sleep(CHECK_INTERVAL)
+
+async def get_binance_price():
+    url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+        return float(data['price'])
+
+async def get_kucoin_price():
+    url = "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=BTC-USDT"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+        return float(data['data']['price'])
