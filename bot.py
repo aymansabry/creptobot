@@ -2,23 +2,25 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import router
-import dotenv
 
-dotenv.load_dotenv()
+API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher()
-dp.include_router(router)
+logging.basicConfig(level=logging.INFO)
 
 async def main():
-    logging.info("Starting DB migration...")
-    import db_migration
-    await db_migration.update_table_structure()
-    logging.info("DB migration done. Starting bot polling...")
-    await dp.start_polling(bot)
+    bot = Bot(token=API_TOKEN, parse_mode="HTML")
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
+    dp.include_router(router)
+
+    # بدء البوت
+    try:
+        logging.info("Starting polling...")
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
