@@ -4,3 +4,4 @@ httpx
 cryptography
 python-dotenv
 sqlalchemy
+openai
