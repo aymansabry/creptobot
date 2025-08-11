@@ -7,9 +7,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from utils.encryption import encrypt_text, decrypt_text
-from db_access import create_or_get_user, save_account_keys, save = None  # placeholder not used
-from db_access import save_account_keys as db_save_keys, get_user_by_telegram, get_account_balance, fetch_live_accounts
 from db_access import create_or_get_user as db_create_user
+from db_access import save_account_keys as db_save_keys
+from db_access import get_user_by_telegram, get_account_balance, fetch_live_accounts
 from exchange_utils import validate_binance, validate_kucoin
 from market import analyze_market, suggest_trades
 
@@ -55,7 +55,11 @@ async def cb_suggest(cb: CallbackQuery):
 @router.callback_query(F.data == "my_portfolio")
 async def cb_portfolio(cb: CallbackQuery):
     bal = get_account_balance(cb.from_user.id)
-    await cb.message.answer(f"💰 استثمار: {bal['investment']:.2f}$\n📈 أرباح: {bal['pnl']:.6f}$\nرصيد: {bal['balance']:.6f}$")
+    await cb.message.answer(
+        f"💰 استثمار: {bal['investment']:.2f}$\n"
+        f"📈 أرباح: {bal['pnl']:.6f}$\n"
+        f"رصيد: {bal['balance']:.6f}$"
+    )
     await cb.answer()
 
 # Start investment flow
@@ -70,7 +74,7 @@ async def cb_start_invest(cb: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("exchange_"))
 async def cb_choose_exchange(cb: CallbackQuery, state: FSMContext):
-    exch = cb.data.split("_",1)[1]
+    exch = cb.data.split("_", 1)[1]
     await state.update_data(exchange=exch)
     await cb.message.answer(f"أرسل الآن {exch} API Key:")
     if exch == "binance":
@@ -95,7 +99,6 @@ async def bin_secret(msg: Message, state: FSMContext):
     if not ok:
         await msg.answer("❌ فشل التحقق من مفاتيح Binance. تحقق من الصلاحيات (Spot/Trade) ثم أعد المحاولة.")
         return
-    # تشفير وحفظ
     enc_key = encrypt_text(key)
     enc_secret = encrypt_text(secret)
     db_save_keys(msg.from_user.id, "binance", api_key=enc_key, api_secret=enc_secret)
@@ -143,10 +146,7 @@ async def enter_invest(msg: Message, state: FSMContext):
         return
     data = await state.get_data()
     exch = data.get("exchange")
-    # حفظ المبلغ وتعيين وضع live
-    enc_none = None
     db_save_keys(msg.from_user.id, exch, investment_amount=amount, mode="live")
     await msg.answer(f"✅ تم تفعيل الاستثمار بمبلغ {amount}$ على منصة {exch}. ستبدأ المراجحة التلقائية (إن وُجدت فرص).")
-    # تفاعل إحساسي للمستخدم
     await msg.answer("🤖 الذكاء الاصطناعي بدأ العمل لحسابك — ستتلقى تحديثات بعد كل تنفيذ.")
     await state.clear()
