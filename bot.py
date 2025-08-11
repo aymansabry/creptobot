@@ -9,7 +9,7 @@ import os
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 @dp.message(Command("start"))
 async def start_bot(message: types.Message):
@@ -20,10 +20,12 @@ async def on_startup():
     asyncio.create_task(arbitrage_loop_all_users(bot))
 
 async def main():
-    await dp.start_polling()
+    await on_startup()
+    # في aiogram 3.x نمرر البوت في start_polling
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import dotenv, logging
+    import dotenv
     dotenv.load_dotenv()
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
