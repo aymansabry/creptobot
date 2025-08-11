@@ -18,7 +18,7 @@ REQUIRED_COLUMNS = {
     "total_profit_loss": "DOUBLE DEFAULT 0"
 }
 
-async def recreate_table():
+async def check_and_create_table():
     import urllib.parse
     parsed = urllib.parse.urlparse(DATABASE_URL)
     pool = await aiomysql.create_pool(
@@ -31,21 +31,23 @@ async def recreate_table():
     )
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            # حذف الجدول إذا كان موجودًا
-            await cur.execute("DROP TABLE IF EXISTS users;")
-            print("Deleted existing table 'users' if existed.")
+            # تحقق إذا الجدول موجود
+            await cur.execute("SHOW TABLES LIKE 'users';")
+            result = await cur.fetchone()
 
-            # بناء جملة إنشاء الجدول كاملة حسب الأعمدة المطلوبة
-            columns_definitions = ",\n".join(f"{col} {typ}" for col, typ in REQUIRED_COLUMNS.items())
-            create_table_sql = f"CREATE TABLE users (\n{columns_definitions}\n);"
-            await cur.execute(create_table_sql)
-            print("Created new table 'users' with defined structure.")
+            if result:
+                print("جدول 'users' موجود بالفعل. لا حاجة لإنشائه.")
+            else:
+                print("جدول 'users' غير موجود، سيتم إنشاؤه.")
+                columns_definitions = ",\n".join(f"{col} {typ}" for col, typ in REQUIRED_COLUMNS.items())
+                create_table_sql = f"CREATE TABLE users (\n{columns_definitions}\n);"
+                await cur.execute(create_table_sql)
+                print("تم إنشاء جدول 'users' بنجاح.")
 
     pool.close()
     await pool.wait_closed()
-    print("Database reset completed.")
 
 if __name__ == "__main__":
     import dotenv
     dotenv.load_dotenv()
-    asyncio.run(recreate_table())
+    asyncio.run(check_and_create_table())
