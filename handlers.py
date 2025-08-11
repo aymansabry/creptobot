@@ -1,7 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
-from aiogram.filters.text import Text
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
@@ -38,12 +37,12 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "مرحبًا بك في بوت المراجحة التلقائية!\n"
-        "اختر الوضع الذي تريد العمل به:", 
+        "اختر الوضع الذي تريد العمل به:",
         reply_markup=mode_keyboard()
     )
     await state.set_state(UserStates.choosing_mode)
 
-@router.callback_query(Text(startswith="mode_"))
+@router.callback_query(F.data.startswith("mode_"))
 async def process_mode_selection(callback: CallbackQuery, state: FSMContext):
     mode = callback.data.split("_")[1]  # live أو demo
     await state.update_data(mode=mode)
@@ -131,5 +130,5 @@ async def admin_panel(message: Message):
     users = await fetch_all_users()
     text = "قائمة المستخدمين:\n"
     for u in users:
-        text += f"- {u['telegram_id']} | رصيد: {u.get('total_profit_loss',0):.4f}\n"
+        text += f"- {u['telegram_id']} | رصيد: {u.get('total_profit_loss', 0):.4f}\n"
     await message.answer(text or "لا يوجد مستخدمين بعد.")
