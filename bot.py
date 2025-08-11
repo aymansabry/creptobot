@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher
-from handlers import router  # تأكد إن handlers.py في نفس المجلد أو مسار صحيح
+from handlers import router
 import dotenv
 
 dotenv.load_dotenv()
@@ -13,7 +13,10 @@ dp = Dispatcher()
 dp.include_router(router)
 
 async def main():
-    logging.info("Starting bot...")
+    logging.info("Starting DB migration...")
+    import db_migration
+    await db_migration.update_table_structure()
+    logging.info("DB migration done. Starting bot polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
