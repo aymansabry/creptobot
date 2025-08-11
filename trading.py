@@ -1,81 +1,48 @@
-import ccxt
-import json
+import time
+import random
 from cryptography.fernet import Fernet
-from sqlalchemy.orm import Session
+from database import SessionLocal
 from models import User
-import os
 
-# مفتاح التشفير
-SECRET_KEY = os.getenv("ENCRYPTION_KEY").encode()
-fernet = Fernet(SECRET_KEY)
+# مفتاح التشفير (لازم يكون نفس الموجود في handlers)
+FERNET_KEY = Fernet.generate_key()
+fernet = Fernet(FERNET_KEY)
 
-# 🔐 تشفير وفك تشفير
-def encrypt_data(data: str) -> str:
-    return fernet.encrypt(data.encode()).decode()
+# تشفير القيم
+def encrypt_value(value: str) -> str:
+    return fernet.encrypt(value.encode()).decode()
 
-def decrypt_data(token: str) -> str:
-    return fernet.decrypt(token.encode()).decode()
+# فك التشفير
+def decrypt_value(value: str) -> str:
+    return fernet.decrypt(value.encode()).decode()
 
-# ⛓️‍♂️ ربط منصات المستخدم
-def save_user_api_keys(db: Session, user_id: int, platform: str, api_key: str, api_secret: str):
-    user = db.query(User).filter(User.id == user_id).first()
+# تحليل السوق (محاكاة بسيطة)
+def analyze_market() -> str:
+    trends = ["📈 السوق في اتجاه صاعد", "📉 السوق في اتجاه هابط", "⚖️ السوق متذبذب"]
+    signal = random.choice(trends)
+    confidence = random.randint(70, 95)
+    return f"{signal}\n📊 نسبة الثقة: {confidence}%"
+
+# محاكاة المراجحة والتداول
+async def start_trading(user_id: int):
+    db = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == user_id).first()
+
     if not user:
-        return False
+        db.close()
+        return
 
-    if platform.lower() == "binance":
-        user.binance_api_key = encrypt_data(api_key)
-        user.binance_api_secret = encrypt_data(api_secret)
-    elif platform.lower() == "kucoin":
-        user.kucoin_api_key = encrypt_data(api_key)
-        user.kucoin_api_secret = encrypt_data(api_secret)
+    for _ in range(5):  # تحديث 5 مرات كمثال
+        time.sleep(2)  # تأخير بسيط لمحاكاة الوقت الحقيقي
 
-    db.commit()
-    return True
+        # ربح عشوائي بين 0.2% و 1%
+        profit_percent = random.uniform(0.2, 1)
+        profit_amount = user.balance * (profit_percent / 100)
 
-# ⚡ تنفيذ عملية تداول بسيطة (مثال)
-def execute_trade_binance(user: User, symbol: str, amount: float, side: str):
-    try:
-        api_key = decrypt_data(user.binance_api_key)
-        api_secret = decrypt_data(user.binance_api_secret)
-        exchange = ccxt.binance({
-            'apiKey': api_key,
-            'secret': api_secret
-        })
-        order = exchange.create_market_order(symbol, side, amount)
-        return order
-    except Exception as e:
-        return {"error": str(e)}
+        user.balance += profit_amount
+        user.profits += profit_amount
+        db.commit()
 
-# 💹 تنفيذ المراجحة بين Binance و KuCoin (مثال تبسيطي)
-def arbitrage_trade(user: User, symbol: str, amount: float):
-    try:
-        # فك التشفير
-        binance_key = decrypt_data(user.binance_api_key)
-        binance_secret = decrypt_data(user.binance_api_secret)
-        kucoin_key = decrypt_data(user.kucoin_api_key)
-        kucoin_secret = decrypt_data(user.kucoin_api_secret)
+        print(f"[TRADING] المستخدم {user_id} | ربح: {profit_amount:.2f}$ | الرصيد: {user.balance:.2f}$")
 
-        binance = ccxt.binance({'apiKey': binance_key, 'secret': binance_secret})
-        kucoin = ccxt.kucoin({'apiKey': kucoin_key, 'secret': kucoin_secret})
-
-        # جلب الأسعار
-        binance_price = binance.fetch_ticker(symbol)['last']
-        kucoin_price = kucoin.fetch_ticker(symbol)['last']
-
-        # منطق المراجحة
-        if binance_price < kucoin_price:
-            # شراء من Binance وبيع في KuCoin
-            binance.create_market_buy_order(symbol, amount)
-            kucoin.create_market_sell_order(symbol, amount)
-            profit = (kucoin_price - binance_price) * amount
-        else:
-            # شراء من KuCoin وبيع في Binance
-            kucoin.create_market_buy_order(symbol, amount)
-            binance.create_market_sell_order(symbol, amount)
-            profit = (binance_price - kucoin_price) * amount
-
-        # تحديث الرصيد
-        user.balance += profit
-        return {"status": "success", "profit": profit}
-    except Exception as e:
-        return {"error": str(e)}
+    db.close()
