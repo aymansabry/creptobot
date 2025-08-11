@@ -1,13 +1,12 @@
+import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from database import Database, ExchangePlatform, User, ExchangeConnection
 from config import Config
-import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
-import time
 import asyncio
 
 # إعدادات التسجيل
@@ -33,23 +32,41 @@ class UserStates(StatesGroup):
     waiting_confirmation = State()
 
 async def on_startup(dp):
+    """دالة تنفيذية عند بدء تشغيل البوت"""
     logger.info("Bot started successfully")
-    await bot.send_message(Config.ADMIN_ID, "✅ البوت يعمل الآن")
+    if Config.ADMIN_ID:
+        try:
+            await bot.send_message(
+                Config.ADMIN_ID,
+                "✅ البوت يعمل الآن\n"
+                f"وقت البدء: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send startup notification: {e}")
 
 async def on_shutdown(dp):
+    """دالة تنفيذية عند إيقاف البوت"""
     logger.info("Bot is shutting down...")
-    await bot.send_message(Config.ADMIN_ID, "⛔ البوت يتوقف الآن")
+    if Config.ADMIN_ID:
+        try:
+            await bot.send_message(Config.ADMIN_ID, "⛔ البوت يتوقف الآن")
+        except Exception as e:
+            logger.error(f"Failed to send shutdown notification: {e}")
+    
     await dp.storage.close()
     await dp.storage.wait_closed()
+    logger.info("Bot shutdown completed")
 
 # ---- وظائف مساعدة ----
 async def get_main_keyboard() -> types.ReplyKeyboardMarkup:
+    """إنشاء لوحة المفاتيح الرئيسية"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row("📊 بيانات التداول", "💰 إدارة الاستثمار")
     keyboard.row("📈 حالة السوق", "📅 كشف حساب")
     return keyboard
 
 async def show_main_menu(message: types.Message):
+    """عرض القائمة الرئيسية"""
     try:
         keyboard = await get_main_keyboard()
         await message.answer("مرحباً بك في بوت التداول الذكي!\nاختر من القائمة:", reply_markup=keyboard)
@@ -60,6 +77,7 @@ async def show_main_menu(message: types.Message):
 # ---- معالجة الأوامر والرسائل ----
 @dp.message_handler(commands=['start', 'help'])
 async def start(message: types.Message):
+    """معالجة أمر /start"""
     try:
         user = db.get_user(message.from_user.id)
         if not user:
@@ -67,14 +85,18 @@ async def start(message: types.Message):
                 'telegram_id': message.from_user.id,
                 'username': message.from_user.username,
                 'first_name': message.from_user.first_name,
-                'last_name': message.from_user.last_name,
+                'last_name': message.from_user.last_name or '',
+                'mode': 'demo',
+                'investment_amount': 0.0,
                 'balance': 0.0,
-                'demo_balance': 10000.0
+                'demo_balance': 10000.0,
+                'is_active': True
             }
-            if db.add_user(user_data):
+            user = db.add_user(user_data)
+            if user:
                 await message.answer("🎉 تم تسجيلك بنجاح في النظام!")
             else:
-                await message.answer("❌ فشل في تسجيل البيانات، يرجى المحاولة لاحقاً")
+                await message.answer("⚠️ حدث خطأ أثناء التسجيل، يرجى المحاولة لاحقاً")
                 return
         
         await show_main_menu(message)
@@ -84,6 +106,7 @@ async def start(message: types.Message):
 
 @dp.message_handler(text="📊 بيانات التداول")
 async def trading_data(message: types.Message):
+    """عرض خيارات بيانات التداول"""
     try:
         keyboard = types.InlineKeyboardMarkup(row_width=2)
         keyboard.add(
@@ -96,10 +119,26 @@ async def trading_data(message: types.Message):
         logger.error(f"Error in trading_data: {e}")
         await message.answer("❌ حدث خطأ في عرض خيارات التداول")
 
-# ... (بقية الدوال تبقى كما هي مع إضافة معالجة الأخطاء)
+@dp.callback_query_handler(lambda c: c.data == "connect_exchange")
+async def connect_exchange(callback: types.CallbackQuery):
+    """بدء عملية ربط منصة تداول جديدة"""
+    try:
+        keyboard = types.InlineKeyboardMarkup()
+        for platform in ExchangePlatform:
+            keyboard.add(types.InlineKeyboardButton(
+                text=platform.value.upper(),
+                callback_data=f"select_{platform.value}"
+            ))
+        await callback.message.edit_text("اختر المنصة لربطها:", reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Error in connect_exchange: {e}")
+        await callback.answer("❌ حدث خطأ في عرض خيارات المنصات")
+
+# ... (يتم استكمال بقية الدوال بنفس النمط)
 
 @dp.callback_query_handler(lambda c: c.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
+    """العودة إلى القائمة الرئيسية"""
     try:
         await callback.message.delete()
         await show_main_menu(callback.message)
@@ -107,7 +146,8 @@ async def back_to_main(callback: types.CallbackQuery):
         logger.error(f"Error in back_to_main: {e}")
         await callback.answer("❌ حدث خطأ أثناء العودة للقائمة الرئيسية")
 
-async def set_commands(bot: Bot):
+async def set_bot_commands():
+    """تعيين أوامر البوت"""
     commands = [
         types.BotCommand("start", "بدء استخدام البوت"),
         types.BotCommand("help", "مساعدة")
@@ -118,16 +158,18 @@ if __name__ == '__main__':
     from aiogram import executor
     
     # تنظيف أي عمليات معلقة
-    asyncio.get_event_loop().run_until_complete(bot.delete_webhook(drop_pending_updates=True))
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(bot.delete_webhook(drop_pending_updates=True))
+    loop.run_until_complete(set_bot_commands()))
     
     try:
         executor.start_polling(
             dp,
             skip_updates=True,
             timeout=30,
+            relax=0.5,
             on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            relax=0.1
+            on_shutdown=on_shutdown
         )
     except Exception as e:
         logger.critical(f"Failed to start bot: {e}")
