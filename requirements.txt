@@ -3,3 +3,4 @@ aiomysql
 httpx
 cryptography
 python-dotenv
+sqlalchemy
