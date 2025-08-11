@@ -14,13 +14,14 @@ REQUIRED_COLUMNS = {
     "kucoin_passphrase": "TEXT",
     "investment_amount": "DOUBLE DEFAULT 0",
     "mode": "VARCHAR(20) DEFAULT 'live'",
+    "wallet_address": "TEXT",
     "total_profit_loss": "DOUBLE DEFAULT 0"
 }
 
 async def get_existing_columns(cursor, table_name):
     await cursor.execute(f"SHOW COLUMNS FROM {table_name}")
     rows = await cursor.fetchall()
-    return {row[0]: row[1] for row in rows}  # {column_name: type}
+    return {row[0]: row[1] for row in rows}
 
 async def update_table_structure():
     import urllib.parse
@@ -35,24 +36,18 @@ async def update_table_structure():
     )
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            # أنشئ الجدول إذا لم يكن موجودًا (بحد أدنى الأعمدة الأساسية)
             await cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 telegram_id BIGINT UNIQUE NOT NULL
             );
             """)
-
             existing_columns = await get_existing_columns(cur, "users")
 
             for col, col_type in REQUIRED_COLUMNS.items():
                 if col not in existing_columns:
                     print(f"Adding missing column: {col}")
                     await cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
-                else:
-                    # يمكن إضافة تحقق تطابق نوع العمود هنا لاحقاً
-                    pass
-
     pool.close()
     await pool.wait_closed()
     print("Table 'users' checked and updated successfully.")
