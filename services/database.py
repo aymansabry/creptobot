@@ -1,155 +1,77 @@
-from typing import Optional, List
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Enum, Text, TIMESTAMP
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.sql import func, text
+from sqlalchemy.sql import func
 from config import Config
-import enum
 import logging
 
-# إعداد التسجيل
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
-class ExchangePlatform(enum.Enum):
-    BINANCE = "binance"
-    KUCOIN = "kucoin"
-    BYBIT = "bybit"
-
-class User(Base):
-    __tablename__ = 'users'
+class Investment(Base):
+    __tablename__ = 'investments'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(Integer, unique=True, nullable=False)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    username = Column(String(100))
-    mode = Column(Enum('live', 'demo', name='user_mode'), default='demo')
-    investment_amount = Column(Float(precision=2), default=0.0)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(TIMESTAMP, server_default=func.now())
-    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-
-    def __repr__(self):
-        return f"<User(id={self.id}, username={self.username})>"
-
-class ExchangeConnection(Base):
-    __tablename__ = 'exchange_connections'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False)
-    platform = Column(Enum(ExchangePlatform), nullable=False)
-    api_key = Column(Text, nullable=False)
-    api_secret = Column(Text, nullable=False)
-    passphrase = Column(Text)
-    is_valid = Column(Boolean, default=False)
-    is_active = Column(Boolean, default=True)
+    amount = Column(Float, nullable=False)
+    is_active = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-
-    def __repr__(self):
-        return f"<ExchangeConnection(user_id={self.user_id}, platform={self.platform})>"
 
 class Database:
     def __init__(self):
-        try:
-            self.engine = create_engine(
-                Config.DATABASE_URL,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                connect_args={
-                    'connect_timeout': 10
-                }
-            )
-            
-            # تعديل هنا: استخدام begin() بدلاً من commit() مباشرة
-            with self.engine.begin() as conn:
-                conn.execute(text("SET SESSION sql_mode='ALLOW_INVALID_DATES';"))
-            
-            self.Session = sessionmaker(bind=self.engine)
-            Base.metadata.create_all(self.engine)
-            logger.info("تم الاتصال بقاعدة البيانات بنجاح وإنشاء الجداول")
-            
-        except Exception as e:
-            logger.error(f"فشل في الاتصال بقاعدة البيانات: {str(e)}")
-            raise
+        self.engine = create_engine(Config.DATABASE_URL)
+        self.Session = sessionmaker(bind=self.engine)
+        Base.metadata.create_all(self.engine)
+        logger.info("تم تهيئة قاعدة البيانات بنجاح")
 
-    def get_user(self, telegram_id: int) -> Optional[User]:
+    # ---- وظائف إدارة الاستثمار ----
+    def set_investment(self, user_id: int, amount: float) -> bool:
         session = self.Session()
         try:
-            return session.query(User).filter_by(telegram_id=telegram_id).first()
-        except Exception as e:
-            logger.error(f"خطأ في جلب المستخدم: {str(e)}")
-            return None
-        finally:
-            session.close()
-
-    def add_user(self, user_data: dict) -> Optional[User]:
-        session = self.Session()
-        try:
-            user = User(**user_data)
-            session.add(user)
+            investment = session.query(Investment).filter_by(user_id=user_id).first()
+            if investment:
+                investment.amount = amount
+            else:
+                investment = Investment(user_id=user_id, amount=amount)
+                session.add(investment)
             session.commit()
-            return user
+            return True
         except Exception as e:
             session.rollback()
-            logger.error(f"خطأ في إضافة مستخدم: {str(e)}")
-            return None
-        finally:
-            session.close()
-
-    def update_user(self, telegram_id: int, update_data: dict) -> bool:
-        session = self.Session()
-        try:
-            rows_updated = session.query(User).filter_by(telegram_id=telegram_id).update(update_data)
-            session.commit()
-            return rows_updated > 0
-        except Exception as e:
-            session.rollback()
-            logger.error(f"خطأ في تحديث المستخدم: {str(e)}")
+            logger.error(f"خطأ في حفظ الاستثمار: {e}")
             return False
         finally:
             session.close()
 
-    def add_exchange_connection(self, connection_data: dict) -> Optional[ExchangeConnection]:
+    def get_investment(self, user_id: int) -> dict:
         session = self.Session()
         try:
-            connection = ExchangeConnection(**connection_data)
-            session.add(connection)
-            session.commit()
-            return connection
+            investment = session.query(Investment).filter_by(user_id=user_id).first()
+            return {
+                'amount': investment.amount if investment else 0.0,
+                'is_active': investment.is_active if investment else False
+            }
         except Exception as e:
-            session.rollback()
-            logger.error(f"خطأ في إضافة اتصال منصة: {str(e)}")
-            return None
+            logger.error(f"خطأ في جلب بيانات الاستثمار: {e}")
+            return {'amount': 0.0, 'is_active': False}
         finally:
             session.close()
 
-    def get_active_connections(self, user_id: int) -> List[ExchangeConnection]:
+    def toggle_investment(self, user_id: int) -> bool:
         session = self.Session()
         try:
-            return session.query(ExchangeConnection).filter_by(
-                user_id=user_id,
-                is_active=True
-            ).all()
-        except Exception as e:
-            logger.error(f"خطأ في جلب اتصالات المنصات: {str(e)}")
-            return []
-        finally:
-            session.close()
-
-    def update_connection_status(self, connection_id: int, is_active: bool) -> bool:
-        session = self.Session()
-        try:
-            rows_updated = session.query(ExchangeConnection).filter_by(
-                id=connection_id
-            ).update({'is_active': is_active})
-            session.commit()
-            return rows_updated > 0
+            investment = session.query(Investment).filter_by(user_id=user_id).first()
+            if investment:
+                investment.is_active = not investment.is_active
+                session.commit()
+                return investment.is_active
+            return False
         except Exception as e:
             session.rollback()
-            logger.error(f"خطأ في تحديث حالة الاتصال: {str(e)}")
+            logger.error(f"خطأ في تبديل حالة الاستثمار: {e}")
             return False
         finally:
             session.close()
