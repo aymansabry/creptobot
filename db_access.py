@@ -1,4 +1,3 @@
-# db_access.py
 from sqlalchemy.orm import Session
 from models import User
 from database import SessionLocal
@@ -21,7 +20,15 @@ def create_or_get_user(telegram_id: int) -> User:
     finally:
         db.close()
 
-def save_account_keys(telegram_id: int, exchange: str, api_key: str=None, api_secret: str=None, passphrase: str=None, investment_amount: float=None, mode: str=None):
+def save_account_keys(
+    telegram_id: int, 
+    exchange: str, 
+    api_key: str=None, 
+    api_secret: str=None, 
+    passphrase: str=None, 
+    investment_amount: float=None, 
+    mode: str=None
+):
     db = SessionLocal()
     try:
         user = get_user_by_telegram(db, telegram_id)
@@ -39,7 +46,8 @@ def save_account_keys(telegram_id: int, exchange: str, api_key: str=None, api_se
             if passphrase is not None: user.kucoin_api_passphrase = passphrase
         if investment_amount is not None:
             user.investment_amount = investment_amount
-            user.last_snapshot_balance = investment_amount if (user.last_snapshot_balance == 0) else user.last_snapshot_balance
+            if user.last_snapshot_balance == 0:
+                user.last_snapshot_balance = investment_amount
         if mode is not None:
             user.mode = mode
         db.commit()
