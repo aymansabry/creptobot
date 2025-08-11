@@ -63,10 +63,10 @@ class Database:
                 }
             )
             
-            with self.engine.connect() as conn:
+            # تعديل هنا: استخدام begin() بدلاً من commit() مباشرة
+            with self.engine.begin() as conn:
                 conn.execute(text("SET SESSION sql_mode='ALLOW_INVALID_DATES';"))
-                conn.commit()
-
+            
             self.Session = sessionmaker(bind=self.engine)
             Base.metadata.create_all(self.engine)
             logger.info("تم الاتصال بقاعدة البيانات بنجاح وإنشاء الجداول")
