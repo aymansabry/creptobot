@@ -1,29 +1,29 @@
 import asyncio
-import logging
 import os
 from aiogram import Bot, Dispatcher
-from aiogram.client.bot import DefaultBotProperties
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 from handlers import router
-
-API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-logging.basicConfig(level=logging.INFO)
+from db_migration import check_and_create_table  # استدعاء التهيئة
 
 async def main():
-    bot = Bot(
-        token=API_TOKEN,
-        default=DefaultBotProperties(parse_mode="HTML")
-    )
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
+    # تهيئة قاعدة البيانات
+    await check_and_create_table()
+
+    # إعداد البوت
+    bot = Bot(token=os.getenv("BOT_TOKEN"))
+    dp = Dispatcher()
     dp.include_router(router)
 
-    try:
-        logging.info("Starting polling...")
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    # أوامر البوت الافتراضية
+    await bot.set_my_commands([
+        BotCommand(command="start", description="بدء التشغيل"),
+        BotCommand(command="help", description="مساعدة")
+    ])
+
+    # بدء البوت
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    import dotenv
+    dotenv.load_dotenv()
     asyncio.run(main())
