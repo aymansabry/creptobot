@@ -16,16 +16,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# تعريف المتغيرات الأساسية
-bot = None
-dp = None
-db = None
-
-def initialize_bot():
-    global bot, dp, db
-    bot = Bot(token=Config.USER_BOT_TOKEN, parse_mode="HTML")
-    dp = Dispatcher(bot, storage=MemoryStorage())
-    db = Database()
+# تعريف الكائنات الأساسية
+bot = Bot(token=Config.USER_BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher(bot, storage=MemoryStorage())
+db = Database()
 
 # حالات المستخدم
 class UserStates(StatesGroup):
@@ -118,9 +112,6 @@ async def set_bot_commands():
 
 if __name__ == '__main__':
     from aiogram import executor
-    
-    # تهيئة البوت
-    initialize_bot()
     
     # تنظيف أي عمليات معلقة
     loop = asyncio.get_event_loop()
