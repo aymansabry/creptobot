@@ -1,107 +1,67 @@
-import aiomysql
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy.orm import declarative_base, sessionmaker
+from cryptography.fernet import Fernet
+import datetime
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+Base = declarative_base()
 
-async def get_pool():
-    import urllib.parse
-    parsed = urllib.parse.urlparse(DATABASE_URL)
-    pool = await aiomysql.create_pool(
-        host=parsed.hostname,
-        port=parsed.port or 3306,
-        user=parsed.username,
-        password=parsed.password,
-        db=parsed.path.lstrip('/'),
-        autocommit=True
-    )
-    return pool
+# تشفير بيانات API
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = Fernet.generate_key().decode()
+    print(f"⚠️ لم يتم العثور على SECRET_KEY، تم إنشاء مفتاح جديد: {SECRET_KEY}")
 
-async def save_user_data(telegram_id: int, data: dict):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            # تحقق هل المستخدم موجود
-            await cur.execute("SELECT id FROM users WHERE telegram_id=%s", (telegram_id,))
-            res = await cur.fetchone()
-            if res:
-                # حدث البيانات
-                await cur.execute("""
-                    UPDATE users SET
-                        binance_api_key=%s,
-                        binance_secret_key=%s,
-                        kucoin_api_key=%s,
-                        kucoin_secret_key=%s,
-                        kucoin_passphrase=%s,
-                        investment_amount=%s,
-                        mode=%s,
-                        wallet_address=%s
-                    WHERE telegram_id=%s
-                """, (
-                    data.get("binance_api_key"),
-                    data.get("binance_secret_key"),
-                    data.get("kucoin_api_key"),
-                    data.get("kucoin_secret_key"),
-                    data.get("kucoin_passphrase"),
-                    data.get("investment_amount"),
-                    data.get("mode"),
-                    data.get("wallet_address"),
-                    telegram_id
-                ))
-            else:
-                # إدخال مستخدم جديد
-                await cur.execute("""
-                    INSERT INTO users (
-                        telegram_id,
-                        binance_api_key,
-                        binance_secret_key,
-                        kucoin_api_key,
-                        kucoin_secret_key,
-                        kucoin_passphrase,
-                        investment_amount,
-                        mode,
-                        wallet_address,
-                        total_profit_loss
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0)
-                """, (
-                    telegram_id,
-                    data.get("binance_api_key"),
-                    data.get("binance_secret_key"),
-                    data.get("kucoin_api_key"),
-                    data.get("kucoin_secret_key"),
-                    data.get("kucoin_passphrase"),
-                    data.get("investment_amount"),
-                    data.get("mode"),
-                    data.get("wallet_address"),
-                ))
-    pool.close()
-    await pool.wait_closed()
+fernet = Fernet(SECRET_KEY.encode())
 
-async def fetch_all_users():
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            await cur.execute("SELECT * FROM users")
-            rows = await cur.fetchall()
-    pool.close()
-    await pool.wait_closed()
-    return rows
+class User(Base):
+    __tablename__ = "users"
 
-async def fetch_live_users():
-    # مثال: جلب كل المستخدمين بوضع live فقط
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            await cur.execute("SELECT * FROM users WHERE mode='live'")
-            rows = await cur.fetchall()
-    pool.close()
-    await pool.wait_closed()
-    return rows
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(Integer, unique=True, nullable=False)
+    balance = Column(Float, default=0.0)
+    profit = Column(Float, default=0.0)
+    binance_api_key = Column(String)
+    binance_api_secret = Column(String)
+    kucoin_api_key = Column(String)
+    kucoin_api_secret = Column(String)
+    kucoin_api_passphrase = Column(String)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-async def update_user_balance(telegram_id: int, profit_loss: float):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("UPDATE users SET total_profit_loss = total_profit_loss + %s WHERE telegram_id=%s",
-                              (profit_loss, telegram_id))
-    pool.close()
-    await pool.wait_closed()
+    def set_binance_keys(self, api_key, api_secret):
+        self.binance_api_key = fernet.encrypt(api_key.encode()).decode()
+        self.binance_api_secret = fernet.encrypt(api_secret.encode()).decode()
+
+    def get_binance_keys(self):
+        if self.binance_api_key and self.binance_api_secret:
+            return (
+                fernet.decrypt(self.binance_api_key.encode()).decode(),
+                fernet.decrypt(self.binance_api_secret.encode()).decode()
+            )
+        return None, None
+
+    def set_kucoin_keys(self, api_key, api_secret, passphrase):
+        self.kucoin_api_key = fernet.encrypt(api_key.encode()).decode()
+        self.kucoin_api_secret = fernet.encrypt(api_secret.encode()).decode()
+        self.kucoin_api_passphrase = fernet.encrypt(passphrase.encode()).decode()
+
+    def get_kucoin_keys(self):
+        if self.kucoin_api_key and self.kucoin_api_secret and self.kucoin_api_passphrase:
+            return (
+                fernet.decrypt(self.kucoin_api_key.encode()).decode(),
+                fernet.decrypt(self.kucoin_api_secret.encode()).decode(),
+                fernet.decrypt(self.kucoin_api_passphrase.encode()).decode()
+            )
+        return None, None, None
+
+
+DB_URL = "sqlite:///bot.db"
+engine = create_engine(DB_URL, echo=False)
+SessionLocal = sessionmaker(bind=engine)
+
+def init_db():
+    Base.metadata.create_all(engine)
+    print("✅ قاعدة البيانات جاهزة")
+
+def get_session():
+    return SessionLocal()
