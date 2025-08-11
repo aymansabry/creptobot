@@ -1,10 +1,9 @@
-# trading.py
 import asyncio
 import os
 import httpx
 from datetime import datetime
 from db_access import fetch_live_accounts, update_account_pnl, get_account_balance
-from utils.encryption import decrypt_text, encrypt_text
+from utils.encryption import decrypt_text
 
 ARBITRAGE_CHECK_INTERVAL = int(os.getenv("ARBITRAGE_CHECK_INTERVAL", "10"))
 ARBITRAGE_THRESHOLD = float(os.getenv("ARBITRAGE_THRESHOLD", "0.005"))
@@ -22,7 +21,6 @@ async def get_kucoin_price():
         return float(d['data']['price'])
 
 async def execute_sample_arbitrage_using_keys(api_key, api_secret, passphrase, account):
-    # نموذج حسابي مبسّط — لا ينفّذ أوامر حقيقية هنا
     b = await get_binance_price()
     k = await get_kucoin_price()
     diff = (b - k) / k
@@ -45,18 +43,16 @@ async def arbitrage_for_account(bot, account):
         api_secret = decrypt_text(account.binance_api_secret) if account.binance_api_secret else None
         passphrase = decrypt_text(account.kucoin_api_passphrase) if account.kucoin_api_passphrase else None
 
-        # نستخدم المفاتيح (هنا نموذج) لحساب الفرص
         result = await execute_sample_arbitrage_using_keys(api_key, api_secret, passphrase, account)
         if not result:
             return
         profit = float(result["profit"])
-        # حدّث DB
         update_account_pnl(account.telegram_id, profit)
         bal = get_account_balance(account.telegram_id)
-        # أرسل إشعار للمستخدم
+
         try:
             await bot.send_message(account.telegram_id,
-                f"⚡ تم تنفيذ مراجحة تلقائيًا على {account.telegram_id}\n"
+                f"⚡ تم تنفيذ مراجحة تلقائيًا على حسابك\n"
                 f"الربح: {profit:.6f} USD\n"
                 f"رصيدك الآن: {bal['balance']:.6f} USD (استثمار: {bal['investment']:.2f}, أرباح: {bal['pnl']:.6f})\n"
                 f"وقت: {datetime.utcnow().isoformat()} UTC"
@@ -86,7 +82,6 @@ async def periodic_balance_updates(bot, interval=60):
         await asyncio.sleep(interval)
 
 def start_background_tasks(bot):
-    # اجعل الدوال تعمل في الخلفية
     import asyncio
     asyncio.create_task(arbitrage_loop_all_users(bot))
     asyncio.create_task(periodic_balance_updates(bot, interval=60))
