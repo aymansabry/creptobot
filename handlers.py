@@ -1,6 +1,6 @@
-from aiogram import Router, F
+from aiogram import Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command, Text
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
@@ -9,7 +9,6 @@ router = Router()
 
 ADMIN_IDS = set(map(int, os.getenv("TELEGRAM_ADMIN_IDS", "").split(',')))
 
-# تعريف الحالات (States) للفيم
 class UserStates(StatesGroup):
     choosing_mode = State()
     entering_binance_api = State()
@@ -19,7 +18,6 @@ class UserStates(StatesGroup):
     entering_kucoin_passphrase = State()
     entering_investment_amount = State()
 
-# لوحة الاختيار بين وهمي وفعلي
 def mode_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -39,9 +37,12 @@ async def cmd_start(message: Message, state: FSMContext):
     )
     await state.set_state(UserStates.choosing_mode)
 
-@router.callback_query(Text(startswith="mode_"))
+# فلتر يدوي لبديل Text(startswith="mode_")
+@router.callback_query()
 async def process_mode_selection(callback: CallbackQuery, state: FSMContext):
-    mode = callback.data.split("_")[1]  # live أو demo
+    if not callback.data or not callback.data.startswith("mode_"):
+        return
+    mode = callback.data.split("_")[1]
     await state.update_data(mode=mode)
     await callback.message.answer(f"اخترنا الوضع: {mode}\n\nالآن أدخل مفتاح API الخاص بمنصة Binance:")
     await state.set_state(UserStates.entering_binance_api)
@@ -50,7 +51,6 @@ async def process_mode_selection(callback: CallbackQuery, state: FSMContext):
 @router.message(UserStates.entering_binance_api)
 async def process_binance_api(message: Message, state: FSMContext):
     api_key = message.text.strip()
-    # هنا ممكن تضيف تحقق بسيط من شكل المفتاح
     await state.update_data(binance_api_key=api_key)
     await message.answer("حسنًا، الآن أدخل السر الخاص بـ Binance:")
     await state.set_state(UserStates.entering_binance_secret)
@@ -96,8 +96,6 @@ async def process_investment_amount(message: Message, state: FSMContext):
     data = await state.get_data()
     mode = data.get("mode", "demo")
     
-    # هنا تحفظ كل البيانات في قاعدة البيانات، مع تشفير المفاتيح
-    # ممكن تضيف دالة خاصة تحفظ بيانات المستخدم، أنا أفترض دالة save_user_data(telegram_id, data)
     from security import encrypt_api_key
     from db import save_user_data
 
@@ -121,17 +119,14 @@ async def process_investment_amount(message: Message, state: FSMContext):
     )
     await state.clear()
 
-# أمر خاص للمدير لعرض المستخدمين أو رصيدهم، مثال بسيط
 @router.message(Command("admin"))
 async def admin_panel(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("🚫 أنت لست مديرًا لهذا البوت.")
         return
-    # استعلام بسيط لجلب المستخدمين وأرباحهم
     from db import fetch_all_users
     users = await fetch_all_users()
     text = "قائمة المستخدمين:\n"
     for u in users:
         text += f"- {u['telegram_id']} | رصيد: {u.get('total_profit_loss',0):.4f}\n"
     await message.answer(text or "لا يوجد مستخدمين بعد.")
-
