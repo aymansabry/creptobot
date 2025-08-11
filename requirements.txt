@@ -1,0 +1,6 @@
+aiogram==2.25.1
+ccxt==3.0.85
+cryptography==39.0.1
+python-dotenv==0.21.0
+SQLAlchemy==1.4.46
+PyMySQL==1.0.2
