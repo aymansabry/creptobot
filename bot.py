@@ -9,7 +9,7 @@ import os
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
 @dp.message(Command("start"))
 async def start_bot(message: types.Message):
