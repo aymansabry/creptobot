@@ -19,7 +19,6 @@ async def main():
     dp = Dispatcher(storage=storage)
     dp.include_router(router)
 
-    # بدء البوت
     try:
         logging.info("Starting polling...")
         await dp.start_polling(bot)
