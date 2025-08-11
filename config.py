@@ -7,7 +7,14 @@ load_dotenv()
 class Config:
     USER_BOT_TOKEN = os.getenv("USER_BOT_TOKEN")
     OWNER_BOT_TOKEN = os.getenv("OWNER_BOT_TOKEN")
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    
+    # تعديل هنا لضبط تنسيق رابط قاعدة البيانات
+    raw_db_url = os.getenv("DATABASE_URL")
+    if raw_db_url.startswith("mysql://"):
+        DATABASE_URL = raw_db_url.replace("mysql://", "mysql+pymysql://")
+    else:
+        DATABASE_URL = raw_db_url
+    
     ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
     ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
     MIN_INVESTMENT = float(os.getenv("MIN_INVESTMENT", 10.0))
