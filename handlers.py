@@ -1,14 +1,19 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from aiogram.filters.text import Text
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import os
 
 router = Router()
 
-ADMIN_IDS = set(map(int, os.getenv("TELEGRAM_ADMIN_IDS", "").split(',')))
+admin_ids_str = os.getenv("TELEGRAM_ADMIN_IDS", "")
+ADMIN_IDS = set()
+if admin_ids_str:
+    ADMIN_IDS = set(int(i) for i in admin_ids_str.split(",") if i.strip().isdigit())
 
+# تعريف الحالات (States) للفيم
 class UserStates(StatesGroup):
     choosing_mode = State()
     entering_binance_api = State()
@@ -18,6 +23,7 @@ class UserStates(StatesGroup):
     entering_kucoin_passphrase = State()
     entering_investment_amount = State()
 
+# لوحة الاختيار بين وهمي وفعلي
 def mode_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -37,12 +43,9 @@ async def cmd_start(message: Message, state: FSMContext):
     )
     await state.set_state(UserStates.choosing_mode)
 
-# فلتر يدوي لبديل Text(startswith="mode_")
-@router.callback_query()
+@router.callback_query(Text(startswith="mode_"))
 async def process_mode_selection(callback: CallbackQuery, state: FSMContext):
-    if not callback.data or not callback.data.startswith("mode_"):
-        return
-    mode = callback.data.split("_")[1]
+    mode = callback.data.split("_")[1]  # live أو demo
     await state.update_data(mode=mode)
     await callback.message.answer(f"اخترنا الوضع: {mode}\n\nالآن أدخل مفتاح API الخاص بمنصة Binance:")
     await state.set_state(UserStates.entering_binance_api)
