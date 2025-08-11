@@ -1,29 +1,32 @@
-import asyncio
 import os
+import asyncio
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
-from handlers import router
-from db_migration import check_and_create_table  # استدعاء التهيئة
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from dotenv import load_dotenv
+from db import init_db
+from handlers import register_handlers
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def main():
-    # تهيئة قاعدة البيانات
-    await check_and_create_table()
+    if not BOT_TOKEN:
+        raise ValueError("❌ متغير TELEGRAM_BOT_TOKEN غير موجود في .env")
 
-    # إعداد البوت
-    bot = Bot(token=os.getenv("BOT_TOKEN"))
-    dp = Dispatcher()
-    dp.include_router(router)
+    # إنشاء البوت والمخزن
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    dp = Dispatcher(storage=MemoryStorage())
 
-    # أوامر البوت الافتراضية
-    await bot.set_my_commands([
-        BotCommand(command="start", description="بدء التشغيل"),
-        BotCommand(command="help", description="مساعدة")
-    ])
+    # تهيئة قاعدة البيانات (إنشاء الجداول لو مش موجودة)
+    init_db()
 
-    # بدء البوت
+    # تسجيل جميع الهاندلرز
+    register_handlers(dp)
+
+    print("✅ البوت يعمل الآن...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import dotenv
-    dotenv.load_dotenv()
     asyncio.run(main())
