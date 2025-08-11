@@ -7,7 +7,7 @@ import json
 import asyncio
 import httpx
 from datetime import datetime
-from db import update_user_balance, fetch_live_users, mark_user_stopped
+from db import update_user_balance, fetch_live_users
 from security import decrypt_api_key
 
 ARBITRAGE_THRESHOLD = 0.005  # 0.5%
@@ -136,7 +136,6 @@ async def check_stop_loss(user_data, bot):
     if total_pnl / investment < -MAX_DRAWDOWN_PERCENT:
         await send_telegram_message(bot, user_data['telegram_id'], 
             "⚠️ تم إيقاف التداول تلقائيًا بسبب تجاوز حد الخسارة المسموح به.")
-        # يمكن هنا تحديث حالة المستخدم في DB لمنع التداول
         return True
     return False
 
@@ -152,7 +151,6 @@ async def arbitrage_for_user(bot, user_data):
 
     qty = user_data['investment_amount'] / min(binance_price, kucoin_price)
 
-    # فك تشفير مفاتيح API
     binance_api_key = decrypt_api_key(user_data['binance_api_key'])
     binance_secret_key = decrypt_api_key(user_data['binance_secret_key'])
     kucoin_api_key = decrypt_api_key(user_data['kucoin_api_key'])
@@ -169,7 +167,7 @@ async def arbitrage_for_user(bot, user_data):
         )
         profit_loss = (binance_price - kucoin_price) * qty
         await update_user_balance(user_data['telegram_id'], profit_loss)
-        await send_telegram_message(bot, user_data['telegram_id'], f"تم تنفيذ مراجحة: شراء من KuCoin وبيع في Binance\\nالربح المتوقع: {profit_loss:.6f} USD")
+        await send_telegram_message(bot, user_data['telegram_id'], f"تم تنفيذ مراجحة: شراء من KuCoin وبيع في Binance\nالربح المتوقع: {profit_loss:.6f} USD")
 
     elif diff < -ARBITRAGE_THRESHOLD:
         buy_resp = await binance_market_order(
@@ -181,7 +179,7 @@ async def arbitrage_for_user(bot, user_data):
         )
         profit_loss = (kucoin_price - binance_price) * qty
         await update_user_balance(user_data['telegram_id'], profit_loss)
-        await send_telegram_message(bot, user_data['telegram_id'], f"تم تنفيذ مراجحة: شراء من Binance وبيع في KuCoin\\nالربح المتوقع: {profit_loss:.6f} USD")
+        await send_telegram_message(bot, user_data['telegram_id'], f"تم تنفيذ مراجحة: شراء من Binance وبيع في KuCoin\nالربح المتوقع: {profit_loss:.6f} USD")
 
     else:
         print("لا توجد فرصة مراجحة مناسبة الآن.")
