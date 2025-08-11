@@ -1,24 +1,23 @@
+# database.py
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import Base
-import os
+from dotenv import load_dotenv
 
-# رابط قاعدة البيانات من المتغيرات البيئية
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
 
-# إنشاء المحرك (Engine)
-engine = create_engine(DATABASE_URL, echo=False)
-
-# جلسة للتعامل مع القاعدة
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = create_engine(DATABASE_URL, echo=False, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 def init_db():
-    """
-    ينشئ الجداول إذا لم تكن موجودة
-    """
     Base.metadata.create_all(bind=engine)
+    print("✅ Database initialized (tables created if needed).")
 
-# استدعاء عند تشغيل البوت لأول مرة
-if __name__ == "__main__":
-    init_db()
-    print("Database initialized successfully.")
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
