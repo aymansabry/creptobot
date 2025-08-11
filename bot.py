@@ -1,4 +1,3 @@
-# bot.py
 import asyncio
 import logging
 import os
@@ -11,7 +10,6 @@ from database import init_db
 from handlers import router
 from trading import start_background_tasks
 
-# تحميل المتغيرات من .env
 load_dotenv()
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -25,16 +23,13 @@ if not TELEGRAM_BOT_TOKEN:
     raise SystemExit("Set TELEGRAM_BOT_TOKEN in env")
 
 async def main():
-    # 1) إنشاء الجداول عند أول تشغيل
     init_db()
 
-    # 2) بوت ودي سباتشر
     bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     dp.include_router(router)
 
-    # 3) ابدأ الخلفيات
     start_background_tasks(bot)
 
     logger.info("🚀 Bot starting polling...")
