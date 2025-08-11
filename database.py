@@ -1,28 +1,30 @@
 # database.py
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-import os
 
-# قراءة بيانات الاتصال من المتغيرات البيئية
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASS = os.getenv("DB_PASS", "password")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_NAME = os.getenv("DB_NAME", "mydb")
+# جلب رابط قاعدة البيانات من .env
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
+# لو مش موجود، استخدام SQLite كخيار افتراضي
+if not DATABASE_URL:
+    DATABASE_URL = "sqlite:///./bot.db"
 
-# إنشاء المحرك
-engine = create_engine(DATABASE_URL, echo=False)
+# إنشاء محرك الاتصال
+engine = create_engine(DATABASE_URL, echo=True)
 
-# إعداد الـ Session
+# جلسة قاعدة البيانات
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Base لإنشاء الجداول
+# قاعدة النماذج
 Base = declarative_base()
 
-# استدعاء النماذج بعد Base لتسجيلها
-from models import User  # تأكد أن لديك ملف models.py يحتوي على الكلاسات
-
 def init_db():
-    """إنشاء الجداول إذا لم تكن موجودة"""
-    Base.metadata.create_all(bind=engine)
+    """إنشاء الجداول في قاعدة البيانات"""
+    from models import User, AccountKeys  # استيراد الموديلات هنا لتجنب الحلقات
+    print(f"Connecting to database: {DATABASE_URL}")
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database tables created successfully.")
+    except Exception as e:
+        print(f"❌ Error creating tables: {e}")
