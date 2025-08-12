@@ -3,121 +3,120 @@ import mysql.connector
 from mysql.connector import Error
 import os
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASS = os.getenv("DB_PASS", "")
-DB_NAME = os.getenv("DB_NAME", "trading_bot")
-
+# ==============================
+# الاتصال بقاعدة البيانات
+# ==============================
 def get_connection():
     return mysql.connector.connect(
-        host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASS,
-        database=DB_NAME
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASS"),
+        database=os.getenv("DB_NAME")
     )
 
+# ==============================
+# إنشاء الجداول
+# ==============================
 def init_db():
-    """إنشاء الجداول وإضافة الإعدادات الافتراضية إذا لم تكن موجودة"""
-    try:
-        conn = mysql.connector.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASS
+    conn = get_connection()
+    cur = conn.cursor()
+    # جدول الإعدادات
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            k VARCHAR(255) PRIMARY KEY,
+            v TEXT
         )
-        cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-        conn.commit()
-        conn.close()
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # جدول المستخدمين
-        cursor.execute("""
+    """)
+    # جدول المستخدمين
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
             telegram_id BIGINT UNIQUE,
             role VARCHAR(20) DEFAULT 'client',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            investment_amount DECIMAL(18,8) DEFAULT 0
         )
-        """)
-
-        # جدول حسابات التداول
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_accounts (
+    """)
+    # جدول مفاتيح API
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS api_keys (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT,
             platform VARCHAR(50),
-            api_key VARCHAR(255),
-            api_secret VARCHAR(255),
-            active BOOLEAN DEFAULT TRUE,
+            api_key TEXT,
+            api_secret TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
-        """)
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
-        # جدول المحفظة
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS wallets (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
-            balance DECIMAL(18,8) DEFAULT 0,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-        """)
-
-        # جدول الإعدادات العامة
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            k VARCHAR(50) PRIMARY KEY,
-            v VARCHAR(255)
-        )
-        """)
-
-        # جدول الصفقات
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS trades (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
-            platform VARCHAR(50),
-            symbol VARCHAR(50),
-            side VARCHAR(10),
-            amount DECIMAL(18,8),
-            price DECIMAL(18,8),
-            profit DECIMAL(18,8),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-        """)
-
-        # إضافة إعداد افتراضي إذا مش موجود
-        cursor.execute("SELECT COUNT(*) FROM settings WHERE k='bot_fee_percent'")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO settings (k, v) VALUES (%s, %s)", ("bot_fee_percent", "10"))
-
-        conn.commit()
-        conn.close()
-        print("✅ قاعدة البيانات جاهزة.")
-
-    except Error as e:
-        print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
-
+# ==============================
+# إعدادات البوت
+# ==============================
 def get_setting(key, default=None):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT v FROM settings WHERE k=%s", (key,))
-        row = cursor.fetchone()
-        conn.close()
-        return row[0] if row else default
-    except:
-        return default
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT v FROM settings WHERE k=%s", (key,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row[0] if row else default
 
 def set_setting(key, value):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         INSERT INTO settings (k, v) VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE v=%s
-    """, (key, value, value))
+        ON DUPLICATE KEY UPDATE v = VALUES(v)
+    """, (key, value))
     conn.commit()
+    cur.close()
+    conn.close()
+
+# ==============================
+# إدارة المستخدمين
+# ==============================
+def get_user_by_telegram_id(telegram_id):
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM users WHERE telegram_id=%s", (telegram_id,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    return user
+
+def add_user(telegram_id, role='client'):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT IGNORE INTO users (telegram_id, role) VALUES (%s, %s)", (telegram_id, role))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def update_investment_amount(telegram_id, amount):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET investment_amount=%s WHERE telegram_id=%s", (amount, telegram_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# ==============================
+# إدارة مفاتيح API
+# ==============================
+def save_user_api(telegram_id, platform, api_key, api_secret):
+    user = get_user_by_telegram_id(telegram_id)
+    if not user:
+        add_user(telegram_id)
+        user = get_user_by_telegram_id(telegram_id)
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO api_keys (user_id, platform, api_key, api_secret)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE api_key=VALUES(api_key), api_secret=VALUES(api_secret)
+    """, (user['id'], platform, api_key, api_secret))
+    conn.commit()
+    cur.close()
     conn.close()
