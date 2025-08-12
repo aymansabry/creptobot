@@ -1,74 +1,72 @@
 # handlers.py
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackContext
 import database
 import utils
 
-# --- القوائم الرئيسية ---
-def main_menu(user_role):
-    if user_role == "admin":
-        buttons = [
-            [InlineKeyboardButton("📊 تعديل نسبة الربح", callback_data="edit_fee")],
-            [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="users_count")],
-            [InlineKeyboardButton("📈 تقارير الاستثمار", callback_data="investment_report")],
-            [InlineKeyboardButton("⚙️ حالة البوت", callback_data="bot_status")],
-            [InlineKeyboardButton("🛒 التداول كمستخدم", callback_data="trade_as_user")]
-        ]
-    else:
-        buttons = [
-            [InlineKeyboardButton("📋 تسجيل/تعديل بيانات التداول", callback_data="register_trade_data")],
-            [InlineKeyboardButton("🚀 ابدأ استثمار", callback_data="start_real_investment")],
-            [InlineKeyboardButton("🧪 استثمار وهمي", callback_data="start_virtual_investment")],
-            [InlineKeyboardButton("📜 كشف حساب", callback_data="account_statement")],
-            [InlineKeyboardButton("📊 حالة السوق", callback_data="market_status")],
-            [InlineKeyboardButton("⛔ إيقاف الاستثمار", callback_data="stop_investment")]
-        ]
-    return InlineKeyboardMarkup(buttons)
+# --- قائمة المستخدم الرئيسية ---
+def user_main_menu(update: Update, context: CallbackContext):
+    keyboard = [
+        [InlineKeyboardButton("1️⃣ تسجيل / تعديل بيانات التداول", callback_data="user_edit_data")],
+        [InlineKeyboardButton("2️⃣ ابدأ استثمار", callback_data="user_start_invest")],
+        [InlineKeyboardButton("3️⃣ استثمار وهمي", callback_data="user_start_virtual")],
+        [InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="user_statement")],
+        [InlineKeyboardButton("5️⃣ حالة السوق", callback_data="user_market_status")],
+        [InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data="user_stop_invest")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text("📋 اختر من القائمة:", reply_markup=reply_markup)
 
-# --- معالجة القائمة الرئيسية ---
-def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    role = database.get_user_role(user_id)
-    update.message.reply_text(
-        "اختر من القائمة:",
-        reply_markup=main_menu(role)
-    )
+# --- قائمة المدير ---
+def admin_main_menu(update: Update, context: CallbackContext):
+    keyboard = [
+        [InlineKeyboardButton("تعديل نسبة ربح البوت", callback_data="admin_edit_fee")],
+        [InlineKeyboardButton("📊 عدد المستخدمين الإجمالي", callback_data="admin_total_users")],
+        [InlineKeyboardButton("🟢 عدد المستخدمين أونلاين", callback_data="admin_online_users")],
+        [InlineKeyboardButton("📈 تقارير الاستثمار", callback_data="admin_invest_reports")],
+        [InlineKeyboardButton("⚙️ حالة البوت", callback_data="admin_bot_status")],
+        [InlineKeyboardButton("💼 التداول كمستخدم", callback_data="admin_trade_as_user")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text("🛠 قائمة المدير:", reply_markup=reply_markup)
 
-# --- تسجيل بيانات التداول ---
-def register_trade_data(update: Update, context: CallbackContext):
-    update.callback_query.message.reply_text("🔑 اختر المنصة لإدخال API Key وSecret...")
+# --- التحقق من API Keys ---
+def verify_api(update: Update, context: CallbackContext, exchange_name, api_key, api_secret, sandbox=False):
+    try:
+        client = utils.get_exchange_client(exchange_name, api_key, api_secret, sandbox)
+        balance = client.fetch_balance()
+        return True, balance
+    except Exception as e:
+        return False, str(e)
 
-# --- بدء الاستثمار الفعلي ---
-def start_real_investment(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    exchanges = database.get_user_exchanges(user_id)
-    if not exchanges:
-        update.callback_query.message.reply_text("⚠️ لم تسجل بيانات التداول بعد.")
-        return
-    
-    # التحقق من الرصيد
-    for ex in exchanges:
-        exchange = utils.get_exchange(ex['name'], ex['api_key'], ex['api_secret'])
-        balance = exchange.fetch_balance()
-        if balance['total']['USDT'] < 10:
-            update.callback_query.message.reply_text(f"❌ رصيدك في {ex['name']} لا يكفي.")
-            return
-    
-    update.callback_query.message.reply_text("✅ بدأ الاستثمار الفعلي...")
+# --- إدخال بيانات المنصة ---
+def user_edit_data(update: Update, context: CallbackContext):
+    update.callback_query.edit_message_text("اختر المنصة التي تريد ربطها:")
 
-# --- بدء الاستثمار الوهمي ---
-def start_virtual_investment(update: Update, context: CallbackContext):
-    update.callback_query.message.reply_text("🧪 بدأ الاستثمار الوهمي (محاكاة)...")
+# --- بدء استثمار حقيقي ---
+def user_start_invest(update: Update, context: CallbackContext):
+    telegram_id = update.effective_user.id
+    # مثال لتنفيذ شراء حقيقي
+    trades = utils.execute_trade(telegram_id, "BTC/USDT", 0.001, side="buy", test_only=False)
+    update.callback_query.edit_message_text(f"✅ تم تنفيذ الصفقات: {trades}")
+
+# --- بدء استثمار وهمي ---
+def user_start_virtual(update: Update, context: CallbackContext):
+    telegram_id = update.effective_user.id
+    trades = utils.execute_trade(telegram_id, "BTC/USDT", 0.001, side="buy", test_only=True)
+    update.callback_query.edit_message_text(f"🧪 محاكاة الصفقات: {trades}")
 
 # --- كشف حساب ---
-def account_statement(update: Update, context: CallbackContext):
-    update.callback_query.message.reply_text("📜 أدخل تاريخ البداية والنهاية لعرض كشف الحساب.")
+def user_statement(update: Update, context: CallbackContext):
+    update.callback_query.edit_message_text("📅 أرسل لي بداية الفترة للاستعلام عن العمليات.")
 
 # --- حالة السوق ---
-def market_status(update: Update, context: CallbackContext):
-    update.callback_query.message.reply_text("📊 جاري تحليل السوق...")
+def user_market_status(update: Update, context: CallbackContext):
+    update.callback_query.edit_message_text("📊 تحليل السوق سيظهر هنا...")
 
 # --- إيقاف الاستثمار ---
-def stop_investment(update: Update, context: CallbackContext):
-    update.callback_query.message.reply_text("⛔ تم إيقاف الاستثمار.")
+def user_stop_invest(update: Update, context: CallbackContext):
+    telegram_id = update.effective_user.id
+    database.stop_user_investment(telegram_id)
+    update.callback_query.edit_message_text("⛔ تم إيقاف الاستثمار.")
 
