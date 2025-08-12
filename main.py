@@ -18,13 +18,11 @@ from kucoin.client import Market, Trade
 
 logging.basicConfig(level=logging.INFO)
 
-# --- البيئة والمتغيرات ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # حاليا مش مستخدم لكن جاهز للتطوير مستقبلاً
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not BOT_TOKEN or not DATABASE_URL:
-    raise Exception("❌ Missing environment variables: BOT_TOKEN, DATABASE_URL")
+    raise Exception("❌ Missing environment variables BOT_TOKEN or DATABASE_URL")
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -34,22 +32,24 @@ Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
-# --- موديل قاعدة البيانات ---
+# ----------------------- DB MODELS -----------------------
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True, index=True)
-    is_admin = Column(Boolean, default=False)
+    # API keys per platform
     binance_api = Column(String(256), nullable=True)
     binance_secret = Column(String(256), nullable=True)
-    binance_active = Column(Boolean, default=False)
     kucoin_api = Column(String(256), nullable=True)
     kucoin_secret = Column(String(256), nullable=True)
     kucoin_passphrase = Column(String(256), nullable=True)
-    kucoin_active = Column(Boolean, default=False)
+    # Investment info
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")  # started / stopped
-    profit_percent = Column(Float, default=1.0)  # نسبة الربح للمدير يمكن تعديلها
+    # Store which platforms are active
+    binance_active = Column(Boolean, default=False)
+    kucoin_active = Column(Boolean, default=False)
 
 class TradeLog(Base):
     __tablename__ = "trade_logs"
@@ -63,75 +63,19 @@ class TradeLog(Base):
 
 Base.metadata.create_all(engine)
 
-# --- FSM States ---
+# ----------------------- FSM States -----------------------
+
 class Form(StatesGroup):
-    waiting_binance_api = State()
-    waiting_binance_secret = State()
-    waiting_kucoin_api = State()
-    waiting_kucoin_secret = State()
-    waiting_kucoin_passphrase = State()
+    platform_choice = State()
+    waiting_api_key = State()
+    waiting_secret_key = State()
+    waiting_passphrase = State()
     waiting_investment_amount = State()
-    waiting_account_statement_start = State()
-    waiting_account_statement_end = State()
+    waiting_report_start = State()
+    waiting_report_end = State()
+    confirm_invest = State()
 
-# --- قوائم الكيبورد ---
-
-def main_menu(user: User):
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("1️⃣ تسجيل أو تعديل بيانات التداول", callback_data="menu_trade_accounts"),
-        InlineKeyboardButton("2️⃣ بدء استثمار حقيقي", callback_data="start_invest"),
-        InlineKeyboardButton("3️⃣ استثمار وهمي", callback_data="demo_invest"),
-        InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="account_statement"),
-        InlineKeyboardButton("5️⃣ حالة السوق", callback_data="market_status"),
-        InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data="stop_invest"),
-    )
-    if user.is_admin:
-        kb.add(InlineKeyboardButton("⚙️ قائمة المدير", callback_data="menu_admin"))
-    return kb
-
-def trading_platforms_menu(user: User):
-    kb = InlineKeyboardMarkup(row_width=1)
-    # Binance
-    if user.binance_api:
-        status = "✅ مفعل" if user.binance_active else "❌ معطل"
-        kb.add(InlineKeyboardButton(f"Binance {status}", callback_data="toggle_binance"))
-        kb.add(InlineKeyboardButton("تعديل Binance", callback_data="edit_binance"))
-    else:
-        kb.add(InlineKeyboardButton("ربط Binance", callback_data="link_binance"))
-    # KuCoin
-    if user.kucoin_api:
-        status = "✅ مفعل" if user.kucoin_active else "❌ معطل"
-        kb.add(InlineKeyboardButton(f"KuCoin {status}", callback_data="toggle_kucoin"))
-        kb.add(InlineKeyboardButton("تعديل KuCoin", callback_data="edit_kucoin"))
-    else:
-        kb.add(InlineKeyboardButton("ربط KuCoin", callback_data="link_kucoin"))
-
-    kb.add(InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu"))
-    return kb
-
-def confirm_toggle_platform_menu(platform_name, enabled: bool):
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("✅ نعم", callback_data=f"confirm_toggle_{platform_name}_yes"),
-        InlineKeyboardButton("❌ لا", callback_data=f"confirm_toggle_{platform_name}_no"),
-    )
-    return kb
-
-def admin_menu():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("تعديل نسبة ربح البوت", callback_data="admin_edit_profit"),
-        InlineKeyboardButton("عدد المستخدمين الإجمالي", callback_data="admin_total_users"),
-        InlineKeyboardButton("عدد المستخدمين أونلاين", callback_data="admin_online_users"),
-        InlineKeyboardButton("تقارير الاستثمار عن فترة", callback_data="admin_investment_reports"),
-        InlineKeyboardButton("حالة البوت البرمجية", callback_data="admin_bot_status"),
-        InlineKeyboardButton("التداول كمستخدم عادي", callback_data="admin_trade_as_user"),
-        InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu"),
-    )
-    return kb
-
-# --- دوال مساعدة ---
+# ----------------------- HELPERS -----------------------
 
 def create_binance_client(user: User):
     if user.binance_api and user.binance_secret:
@@ -145,275 +89,355 @@ def create_kucoin_clients(user: User):
         return market_client, trade_client
     return None, None
 
-async def check_binance_keys(api_key, secret_key):
+async def verify_binance_keys(api_key, secret_key):
     try:
         client = BinanceClient(api_key, secret_key)
         client.get_account()
-        return True, None
-    except Exception as e:
-        return False, str(e)
+        return True
+    except Exception:
+        return False
 
-async def check_kucoin_keys(api_key, secret_key, passphrase):
+async def verify_kucoin_keys(api_key, secret_key, passphrase):
     try:
         trade_client = Trade(api_key, secret_key, passphrase)
         trade_client.get_account()
-        return True, None
-    except Exception as e:
-        return False, str(e)
+        return True
+    except Exception:
+        return False
 
-async def get_wallet_balance_binance(client):
-    try:
-        account = client.get_account()
-        for asset in account['balances']:
-            if asset['asset'] == 'USDT':
-                return float(asset['free'])
-    except:
-        return 0.0
-    return 0.0
+def user_platforms_keyboard(user: User):
+    kb = InlineKeyboardMarkup(row_width=2)
+    # Binance button with status color
+    binance_text = ("✅ Binance" if user.binance_active else "❌ Binance") + (" (مربوط)" if user.binance_api else " (غير مربوط)")
+    kucoin_text = ("✅ KuCoin" if user.kucoin_active else "❌ KuCoin") + (" (مربوط)" if user.kucoin_api else " (غير مربوط)")
+    kb.insert(InlineKeyboardButton(binance_text, callback_data="platform_binance"))
+    kb.insert(InlineKeyboardButton(kucoin_text, callback_data="platform_kucoin"))
+    kb.add(InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu"))
+    return kb
 
-async def get_wallet_balance_kucoin(trade_client):
-    try:
-        account_info = trade_client.get_account()
-        for coin in account_info:
-            if coin['currency'] == 'USDT':
-                return float(coin['available'])
-    except:
-        return 0.0
-    return 0.0
+def main_menu_keyboard():
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("1️⃣ تسجيل/تعديل بيانات التداول", callback_data="menu_edit_trading_data"),
+        InlineKeyboardButton("2️⃣ ابدأ استثمار", callback_data="menu_start_invest"),
+        InlineKeyboardButton("3️⃣ استثمار وهمي", callback_data="menu_fake_invest"),
+        InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="menu_report"),
+        InlineKeyboardButton("5️⃣ حالة السوق", callback_data="menu_market_status"),
+        InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data="menu_stop_invest"),
+    )
+    return kb
 
-# --- أوامر وبوت handlers ---
+# ----------------------- HANDLERS -----------------------
 
 @dp.message_handler(commands=["start"])
-async def start_command(message: types.Message):
+async def start_handler(message: types.Message):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
     if not user:
         user = User(telegram_id=message.from_user.id)
-        # إذا تريد تحدد admins (مثلاً صاحبك)، ممكن تضيف هنا شرط
-        # if message.from_user.id == 123456789:
-        #    user.is_admin = True
         db.add(user)
         db.commit()
-    await message.answer("أهلاً بك في بوت الاستثمار! اختر من القائمة:", reply_markup=main_menu(user))
     db.close()
+
+    await message.answer("أهلاً بك في بوت الاستثمار، اختر من القائمة:", reply_markup=main_menu_keyboard())
 
 @dp.callback_query_handler(lambda c: c.data == "main_menu")
-async def go_main_menu(call: types.CallbackQuery):
+async def back_to_main(call: types.CallbackQuery):
+    await call.answer()
+    await call.message.edit_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard())
+
+# 1- تسجيل/تعديل بيانات التداول
+@dp.callback_query_handler(lambda c: c.data == "menu_edit_trading_data")
+async def menu_edit_trading_data(call: types.CallbackQuery):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    if not user:
-        await call.message.edit_text("❌ لم يتم العثور على حسابك. استخدم /start للبدء.")
-        db.close()
-        return
-    await call.message.edit_text("أهلاً بك في بوت الاستثمار! اختر من القائمة:", reply_markup=main_menu(user))
-    await call.answer()
     db.close()
-
-# --- قائمة تسجيل أو تعديل بيانات التداول ---
-@dp.callback_query_handler(lambda c: c.data == "menu_trade_accounts")
-async def trade_accounts_menu(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    await call.message.edit_text("اختر منصة للتسجيل/التعديل:", reply_markup=trading_platforms_menu(user))
     await call.answer()
-    db.close()
+    await call.message.edit_text(
+        "اختر المنصة لإضافة/تعديل مفاتيح API أو تفعيل/إيقاف:",
+        reply_markup=user_platforms_keyboard(user)
+    )
 
-# --- ربط Binance ---
-@dp.callback_query_handler(lambda c: c.data == "link_binance")
-async def link_binance(call: types.CallbackQuery):
-    await call.message.answer("🔑 أرسل مفتاح API الخاص بـ Binance:")
-    await Form.waiting_binance_api.set()
+@dp.callback_query_handler(lambda c: c.data.startswith("platform_"))
+async def platform_selected(call: types.CallbackQuery, state: FSMContext):
+    platform = call.data.split("_")[1]
+    await state.update_data(selected_platform=platform)
     await call.answer()
 
-@dp.message_handler(state=Form.waiting_binance_api)
-async def process_binance_api(message: types.Message, state: FSMContext):
-    await state.update_data(binance_api=message.text)
-    await message.answer("🗝️ أرسل Secret Key الخاص بـ Binance:")
-    await Form.waiting_binance_secret.set()
+    if platform == "binance":
+        await call.message.edit_text("أرسل مفتاح API الخاص بمنصة Binance:")
+        await Form.waiting_api_key.set()
+    elif platform == "kucoin":
+        await call.message.edit_text("أرسل مفتاح API الخاص بمنصة KuCoin:")
+        await Form.waiting_api_key.set()
 
-@dp.message_handler(state=Form.waiting_binance_secret)
-async def process_binance_secret(message: types.Message, state: FSMContext):
+@dp.message_handler(state=Form.waiting_api_key)
+async def api_key_received(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    api_key = data["binance_api"]
-    secret_key = message.text
+    platform = data["selected_platform"]
+    api_key = message.text.strip()
 
-    valid, err = await check_binance_keys(api_key, secret_key)
-    if valid:
+    await state.update_data(api_key=api_key)
+
+    if platform == "binance":
+        await message.answer("أرسل الـ Secret Key الخاص بـ Binance:")
+        await Form.waiting_secret_key.set()
+    elif platform == "kucoin":
+        await message.answer("أرسل الـ Secret Key الخاص بـ KuCoin:")
+        await Form.waiting_secret_key.set()
+
+@dp.message_handler(state=Form.waiting_secret_key)
+async def secret_key_received(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    platform = data["selected_platform"]
+    secret_key = message.text.strip()
+
+    await state.update_data(secret_key=secret_key)
+
+    if platform == "binance":
+        # تحقق من المفاتيح
+        valid = await verify_binance_keys(data["api_key"], secret_key)
+        if not valid:
+            await message.answer("❌ المفاتيح غير صحيحة، أرسل /start وحاول مرة أخرى.")
+            await state.finish()
+            return
         db = SessionLocal()
         user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        user.binance_api = api_key
+        user.binance_api = data["api_key"]
         user.binance_secret = secret_key
         user.binance_active = True
         db.add(user)
         db.commit()
         db.close()
-        await message.answer("✅ تم ربط Binance بنجاح ✅")
-    else:
-        await message.answer(f"❌ فشل التحقق من مفاتيح Binance:\n{err}\nأرسل /menu_trade_accounts وحاول مرة أخرى.")
+        await message.answer("✅ تم ربط Binance بنجاح!")
+        await state.finish()
+        await message.answer("العودة للقائمة الرئيسية:", reply_markup=main_menu_keyboard())
 
-    await state.finish()
-
-# --- ربط KuCoin ---
-@dp.callback_query_handler(lambda c: c.data == "link_kucoin")
-async def link_kucoin(call: types.CallbackQuery):
-    await call.message.answer("🔑 أرسل مفتاح API الخاص بـ KuCoin:")
-    await Form.waiting_kucoin_api.set()
-    await call.answer()
-
-@dp.message_handler(state=Form.waiting_kucoin_api)
-async def process_kucoin_api(message: types.Message, state: FSMContext):
-    await state.update_data(kucoin_api=message.text)
-    await message.answer("🗝️ أرسل Secret Key الخاص بـ KuCoin:")
-    await Form.waiting_kucoin_secret.set()
-
-@dp.message_handler(state=Form.waiting_kucoin_secret)
-async def process_kucoin_secret(message: types.Message, state: FSMContext):
-    await state.update_data(kucoin_secret=message.text)
-    await message.answer("🔐 أرسل Passphrase الخاص بـ KuCoin:")
-    await Form.waiting_kucoin_passphrase.set()
-
-@dp.message_handler(state=Form.waiting_kucoin_passphrase)
-async def process_kucoin_passphrase(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    api_key = data["kucoin_api"]
-    secret_key = data["kucoin_secret"]
-    passphrase = message.text
-
-    valid, err = await check_kucoin_keys(api_key, secret_key, passphrase)
-    if valid:
-        db = SessionLocal()
-        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        user.kucoin_api = api_key
-        user.kucoin_secret = secret_key
-        user.kucoin_passphrase = passphrase
-        user.kucoin_active = True
-        db.add(user)
-        db.commit()
-        db.close()
-        await message.answer("✅ تم ربط KuCoin بنجاح ✅")
-    else:
-        await message.answer(f"❌ فشل التحقق من مفاتيح KuCoin:\n{err}\nأرسل /menu_trade_accounts وحاول مرة أخرى.")
-    await state.finish()
-
-# --- تعديل أو تعطيل المنصات ---
-
-@dp.callback_query_handler(lambda c: c.data == "toggle_binance")
-async def toggle_binance(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    new_status = not user.binance_active
-    # نطلب تأكيد من المستخدم
-    await call.message.edit_text(
-        f"هل تريد {'تفعيل' if new_status else 'تعطيل'} Binance؟",
-        reply_markup=confirm_toggle_platform_menu("binance", new_status)
-    )
-    await call.answer()
-    db.close()
-
-@dp.callback_query_handler(lambda c: c.data.startswith("confirm_toggle_binance_"))
-async def confirm_toggle_binance(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    if call.data.endswith("_yes"):
-        user.binance_active = not user.binance_active
-        db.add(user)
-        db.commit()
-        await call.message.edit_text(f"تم {'تفعيل' if user.binance_active else 'تعطيل'} Binance بنجاح!")
-    else:
-        await call.message.edit_text("تم إلغاء العملية.")
-    db.close()
-
-@dp.callback_query_handler(lambda c: c.data == "toggle_kucoin")
-async def toggle_kucoin(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    new_status = not user.kucoin_active
-    await call.message.edit_text(
-        f"هل تريد {'تفعيل' if new_status else 'تعطيل'} KuCoin؟",
-        reply_markup=confirm_toggle_platform_menu("kucoin", new_status)
-    )
-    await call.answer()
-    db.close()
-
-@dp.callback_query_handler(lambda c: c.data.startswith("confirm_toggle_kucoin_"))
-async def confirm_toggle_kucoin(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    if call.data.endswith("_yes"):
-        user.kucoin_active = not user.kucoin_active
-        db.add(user)
-        db.commit()
-        await call.message.edit_text(f"تم {'تفعيل' if user.kucoin_active else 'تعطيل'} KuCoin بنجاح!")
-    else:
-        await call.message.edit_text("تم إلغاء العملية.")
-    db.close()
-
-# --- تعديل بيانات منصات (مكرر لنفس الواجهة) ---
-@dp.callback_query_handler(lambda c: c.data in ["edit_binance", "edit_kucoin"])
-async def edit_platform(call: types.CallbackQuery):
-    platform = call.data.replace("edit_", "")
-    await call.message.answer(f"🔑 أرسل مفتاح API الخاص بـ {platform.capitalize()}:")
-    if platform == "binance":
-        await Form.waiting_binance_api.set()
     elif platform == "kucoin":
-        await Form.waiting_kucoin_api.set()
-    await call.answer()
+        await message.answer("أرسل الـ Passphrase الخاص بـ KuCoin:")
+        await Form.waiting_passphrase.set()
 
-# --- تحديد مبلغ الاستثمار ---
-@dp.callback_query_handler(lambda c: c.data == "set_investment")
-async def set_investment_command(call: types.CallbackQuery):
-    await call.message.answer("💰 أرسل مبلغ الاستثمار بالدولار (مثلاً: 100):")
-    await Form.waiting_investment_amount.set()
-    await call.answer()
+@dp.message_handler(state=Form.waiting_passphrase)
+async def passphrase_received(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    passphrase = message.text.strip()
+    platform = data["selected_platform"]
 
-@dp.message_handler(state=Form.waiting_investment_amount)
-async def process_investment_amount(message: types.Message, state: FSMContext):
-    try:
-        amount = float(message.text)
-        if amount <= 0:
-            raise ValueError()
-    except:
-        await message.answer("❌ المبلغ غير صالح. أرسل رقماً أكبر من صفر.")
+    valid = await verify_kucoin_keys(data["api_key"], data["secret_key"], passphrase)
+    if not valid:
+        await message.answer("❌ المفاتيح غير صحيحة، أرسل /start وحاول مرة أخرى.")
+        await state.finish()
         return
 
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-
-    # تحقق الرصيد على كل منصة مفعلة (مبسّط، نأخذ الحد الأدنى)
-    balances = []
-    if user.binance_active:
-        client = create_binance_client(user)
-        if client:
-            balance = await get_wallet_balance_binance(client)
-            balances.append(balance)
-    if user.kucoin_active:
-        _, trade_client = create_kucoin_clients(user)
-        if trade_client:
-            balance = await get_wallet_balance_kucoin(trade_client)
-            balances.append(balance)
-    available_balance = min(balances) if balances else 0.0
-
-    if available_balance < amount:
-        await message.answer(
-            f"❌ رصيدك الحالي {available_balance:.2f} USDT لا يكفي للاستثمار بهذا المبلغ.\n"
-            "يرجى إيداع رصيد ثم المحاولة مجددًا."
-        )
-        await state.finish()
-        db.close()
-        return
-
-    user.investment_amount = amount
+    user.kucoin_api = data["api_key"]
+    user.kucoin_secret = data["secret_key"]
+    user.kucoin_passphrase = passphrase
+    user.kucoin_active = True
     db.add(user)
     db.commit()
     db.close()
 
-    await message.answer(f"✅ تم تحديد مبلغ الاستثمار: {amount} USDT")
+    await message.answer("✅ تم ربط KuCoin بنجاح!")
     await state.finish()
+    await message.answer("العودة للقائمة الرئيسية:", reply_markup=main_menu_keyboard())
 
-# --- بدء الاستثمار الحقيقي ---
-@dp.callback_query_handler(lambda c: c.data == "start_invest")
-async def start_invest(call: types.CallbackQuery):
+# 1.1 إلغاء تفعيل أو تفعيل المنصة (زر إضافي يمكن تضيفه إن أردت)
+
+# 1.2 تعديل/حذف المنصة (يمكن تنفيذ لاحقاً، الآن تركنا للربط فقط)
+
+# 2- بدء استثمار حقيقي
+@dp.callback_query_handler(lambda c: c.data == "menu_start_invest")
+async def start_invest_handler(call: types.CallbackQuery):
+    db = SessionLocal()
+    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
+
+    if not user or (not user.binance_active and not user.kucoin_active):
+        await call.answer("❌ لم تقم بربط أي منصة تداول.")
+        db.close()
+        return
+    if user.investment_amount <= 0:
+        await call.answer("❌ لم تحدد مبلغ الاستثمار، الرجاء تحديده أولاً.")
+        db.close()
+        return
+
+    user.investment_status = "started"
+    db.add(user)
+    db.commit()
+    db.close()
+    await call.answer()
+    await call.message.edit_text("🚀 تم بدء الاستثمار والمراجحة تلقائياً. يمكنك إيقافه من القائمة متى شئت.")
+    asyncio.create_task(run_arbitrage_loop(call.from_user.id))
+
+# 3- استثمار وهمي
+@dp.callback_query_handler(lambda c: c.data == "menu_fake_invest")
+async def fake_invest_handler(call: types.CallbackQuery):
+    await call.answer()
+    await call.message.edit_text("🛑 الاستثمار الوهمي غير مفعل حاليا. سيتم إضافته لاحقاً.")
+
+# 4- كشف حساب عن فترة
+@dp.callback_query_handler(lambda c: c.data == "menu_report")
+async def report_start_handler(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("📅 أرسل تاريخ بداية الفترة (مثلاً: 2023-08-01):")
+    await Form.waiting_report_start.set()
+
+@dp.message_handler(state=Form.waiting_report_start)
+async def report_start_date_received(message: types.Message, state: FSMContext):
+    try:
+        start_date = datetime.strptime(message.text.strip(), "%Y-%m-%d")
+        await state.update_data(report_start=start_date)
+        await message.answer("📅 أرسل تاريخ نهاية الفترة (مثلاً: 2023-08-10):")
+        await Form.waiting_report_end.set()
+    except Exception:
+        await message.answer("❌ تنسيق التاريخ غير صحيح. استخدم: YYYY-MM-DD")
+
+@dp.message_handler(state=Form.waiting_report_end)
+async def report_end_date_received(message: types.Message, state: FSMContext):
+    try:
+        end_date = datetime.strptime(message.text.strip(), "%Y-%m-%d")
+        data = await state.get_data()
+        start_date = data["report_start"]
+
+        if end_date < start_date:
+            await message.answer("❌ تاريخ النهاية لا يمكن أن يكون قبل البداية.")
+            return
+
+        db = SessionLocal()
+        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+        trades = db.query(TradeLog).filter(
+            TradeLog.user_id == user.id,
+            TradeLog.timestamp >= start_date,
+            TradeLog.timestamp <= end_date + timedelta(days=1),
+        ).all()
+        db.close()
+
+        if not trades:
+            await message.answer("لا توجد بيانات عن هذه الفترة.")
+            await state.finish()
+            return
+
+        report_text = f"📊 كشف حساب من {start_date.date()} إلى {end_date.date()}:\n"
+        total_profit = 0
+        for t in trades:
+            report_text += f"{t.timestamp.date()} - {t.trade_type} - ربح: {t.profit:.2f} USDT\n"
+            total_profit += t.profit
+        report_text += f"\n💰 إجمالي الربح: {total_profit:.2f} USDT"
+        await message.answer(report_text)
+        await state.finish()
+    except Exception:
+        await message.answer("❌ تنسيق التاريخ غير صحيح. استخدم: YYYY-MM-DD")
+
+# 5- حالة السوق (تحليل مبسط)
+@dp.callback_query_handler(lambda c: c.data == "menu_market_status")
+async def market_status_handler(call: types.CallbackQuery):
+    await call.answer()
+    # مثال: تحليل مبسط — يمكنك إضافة ذكاء أكثر لاحقاً
+    text = "📈 حالة السوق الحالية:\n- السوق مستقر نسبياً.\n- نصيحتي: ابدأ استثمارك إذا كنت مستعداً للمخاطرة."
+    await call.message.edit_text(text, reply_markup=main_menu_keyboard())
+
+# 6- إيقاف الاستثمار
+@dp.callback_query_handler(lambda c: c.data == "menu_stop_invest")
+async def stop_invest_handler(call: types.CallbackQuery):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
     if not user:
-        await call.message.answer("❌ لم يتم ر
+        await call.answer("❌ لم يتم ربط حسابك.")
+        db.close()
+        return
+    user.investment_status = "stopped"
+    db.add(user)
+    db.commit()
+    db.close()
+    await call.answer()
+    await call.message.edit_text("⏹️ تم إيقاف الاستثمار. لن يتم استخدام أموالك حتى تطلب البدء مجدداً.", reply_markup=main_menu_keyboard())
+
+# ----------------------- ARBITRAGE LOOP -----------------------
+
+async def run_arbitrage_loop(user_telegram_id):
+    db = SessionLocal()
+    user = db.query(User).filter_by(telegram_id=user_telegram_id).first()
+    if not user or user.investment_status != "started":
+        db.close()
+        return
+
+    while True:
+        db.refresh(user)
+        if user.investment_status != "started":
+            db.close()
+            return
+
+        try:
+            binance_client = create_binance_client(user)
+            kucoin_market, kucoin_trade = create_kucoin_clients(user)
+
+            # إذا ما فيش عملاء، نوقف
+            if not binance_client and not kucoin_trade:
+                await bot.send_message(user.telegram_id, "❌ لا توجد منصات مفعلة للاستثمار.")
+                user.investment_status = "stopped"
+                db.add(user)
+                db.commit()
+                db.close()
+                return
+
+            # خذ أسعار BTCUSDT كمثال (يمكن إضافة غيرها)
+            binance_price = None
+            kucoin_price = None
+
+            if binance_client:
+                binance_price = float(binance_client.get_symbol_ticker(symbol="BTCUSDT")['price'])
+            if kucoin_market:
+                kucoin_price = float(kucoin_market.get_ticker("BTC-USDT")['price'])
+
+            threshold = 20.0
+            amount_to_trade = 0
+            if user.investment_amount > 0:
+                min_price = min(filter(None, [binance_price, kucoin_price]))
+                amount_to_trade = user.investment_amount / min_price if min_price else 0
+
+            trade_type = None
+            profit = 0
+
+            # فرصة مراجحة بين المنصات
+            if binance_price and kucoin_price:
+                if binance_price + threshold < kucoin_price:
+                    # شراء من Binance وبيع في KuCoin
+                    if binance_client and kucoin_trade:
+                        binance_client.order_market_buy(symbol="BTCUSDT", quantity=amount_to_trade)
+                        kucoin_trade.create_market_order('BTC-USDT', 'sell', size=str(amount_to_trade))
+                        profit = (kucoin_price - binance_price) * amount_to_trade
+                        trade_type = "Buy Binance / Sell KuCoin"
+                elif kucoin_price + threshold < binance_price:
+                    # شراء من KuCoin وبيع في Binance
+                    if kucoin_trade and binance_client:
+                        kucoin_trade.create_market_order('BTC-USDT', 'buy', size=str(amount_to_trade))
+                        binance_client.order_market_sell(symbol="BTCUSDT", quantity=amount_to_trade)
+                        profit = (binance_price - kucoin_price) * amount_to_trade
+                        trade_type = "Buy KuCoin / Sell Binance"
+
+            if trade_type:
+                trade = TradeLog(
+                    user_id=user.id,
+                    trade_type=trade_type,
+                    amount=amount_to_trade,
+                    price=min(binance_price, kucoin_price),
+                    profit=profit,
+                )
+                db.add(trade)
+                db.commit()
+                await bot.send_message(user.telegram_id,
+                    f"✅ تمت عملية المراجحة:\n{trade_type}\nالكمية: {amount_to_trade:.6f} BTC\nالربح المتوقع: {profit:.2f} USDT")
+            else:
+                # لو ما فيش فرصة
+                await bot.send_message(user.telegram_id, "⚠️ لا توجد فرص مراجحة حالياً.")
+
+            await asyncio.sleep(30)
+        except Exception as e:
+            await bot.send_message(user.telegram_id, f"❌ خطأ أثناء المراجحة: {str(e)}")
+            await asyncio.sleep(60)
+
+# ----------------------- START BOT -----------------------
+
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
