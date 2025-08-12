@@ -8,3 +8,5 @@ SQLAlchemy==2.0.19
 pymysql
 alembic
 aiogram==2.25.1
+python-binance
+kucoin-python
