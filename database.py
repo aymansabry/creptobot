@@ -1,31 +1,35 @@
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
 import datetime
 
 load_dotenv()
 
-engine = None
-SessionLocal = None
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL is not set in .env")
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 Base = declarative_base()
 
-# ===== تعريف الجداول =====
+# الجداول
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     telegram_id = Column(Integer, unique=True, index=True)
     username = Column(String(100), nullable=True)
-    role = Column(String(20), default="client")  # client, admin
+    role = Column(String(20), default="client")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class ExchangeAPIKey(Base):
     __tablename__ = "exchange_api_keys"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)  # FK to User.id
-    exchange_name = Column(String(50))  # e.g. "binance", "kucoin"
+    user_id = Column(Integer, index=True)
+    exchange_name = Column(String(50))
     api_key = Column(String(255))
     api_secret = Column(String(255))
     enabled = Column(Boolean, default=True)
@@ -36,8 +40,8 @@ class Investment(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, index=True)
     amount = Column(Float)
-    is_real = Column(Boolean, default=False)  # true = actual investment, false = simulated
-    status = Column(String(20), default="pending")  # pending, running, stopped, completed
+    is_real = Column(Boolean, default=False)
+    status = Column(String(20), default="pending")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -46,7 +50,7 @@ class TradeRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     investment_id = Column(Integer, index=True)
     symbol = Column(String(20))
-    side = Column(String(4))  # buy or sell
+    side = Column(String(4))
     price = Column(Float)
     amount = Column(Float)
     fee = Column(Float)
@@ -59,16 +63,7 @@ class Setting(Base):
     key = Column(String(50), unique=True)
     value = Column(String(255))
 
-# ===== تهيئة قاعدة البيانات =====
-def init_db(database_url=None):
-    global engine, SessionLocal
-    if not database_url:
-        database_url = os.getenv("DATABASE_URL")
-        if not database_url:
-            raise Exception("DATABASE_URL is not set in .env or passed to init_db()")
-
-    engine = create_engine(database_url, pool_pre_ping=True)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def init_db():
     Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -78,7 +73,6 @@ def get_db():
     finally:
         db.close()
 
-# ===== إعدادات =====
 def get_setting(db, key: str, default=None):
     try:
         setting = db.query(Setting).filter(Setting.key == key).first()
