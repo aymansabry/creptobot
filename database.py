@@ -1,4 +1,3 @@
-# database.py
 import os
 import mysql.connector
 from mysql.connector import errorcode
@@ -49,7 +48,15 @@ def create_tables():
             kucoin_secret_key VARCHAR(255),
             invested_amount FLOAT DEFAULT 0,
             profit FLOAT DEFAULT 0,
+            active_platforms JSON NULL,
             is_investing BOOLEAN DEFAULT FALSE
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS owner_wallet (
+            id INT PRIMARY KEY CHECK (id = 1),
+            wallet_address VARCHAR(255),
+            profit_percentage FLOAT DEFAULT 10
         )
         """)
         cursor.execute("""
@@ -66,97 +73,3 @@ def create_tables():
         cursor.close()
         conn.commit()
         conn.close()
-
-
-def get_user_active_platforms(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT binance_api_key, kucoin_api_key FROM users WHERE telegram_id=%s", (user_id,)
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    platforms = []
-    if row:
-        if row[0]:
-            platforms.append("binance")
-        if row[1]:
-            platforms.append("kucoin")
-    return platforms
-
-def set_user_binance_api(user_id, api_key):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO users (telegram_id, binance_api_key) VALUES (%s, %s) "
-        "ON DUPLICATE KEY UPDATE binance_api_key=%s",
-        (user_id, api_key, api_key),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def set_user_binance_secret(user_id, secret_key):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET binance_secret_key=%s WHERE telegram_id=%s", (secret_key, user_id)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def set_user_kucoin_api(user_id, api_key):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET kucoin_api_key=%s WHERE telegram_id=%s", (api_key, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def set_user_kucoin_secret(user_id, secret_key):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET kucoin_secret_key=%s WHERE telegram_id=%s", (secret_key, user_id)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def set_user_invest_amount(user_id, amount):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET invested_amount=%s WHERE telegram_id=%s", (amount, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def get_user_invest_amount(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT invested_amount FROM users WHERE telegram_id=%s", (user_id,))
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return result[0] if result else 0
-
-def update_user_profit(user_id, profit):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET profit=profit+%s WHERE telegram_id=%s", (profit, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def log_investment_history(user_id, platform, operation, amount, price):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO investment_history (telegram_id, platform, operation, amount, price) VALUES (%s, %s, %s, %s, %s)",
-        (user_id, platform, operation, amount, price),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
