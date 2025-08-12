@@ -42,12 +42,32 @@ def create_tables():
             CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 telegram_id BIGINT UNIQUE,
-                binance_api_key VARCHAR(255),
-                binance_secret_key VARCHAR(255),
-                kucoin_api_key VARCHAR(255),
-                kucoin_secret_key VARCHAR(255),
                 invested_amount FLOAT DEFAULT 0,
                 profit FLOAT DEFAULT 0
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS platforms (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                telegram_id BIGINT,
+                platform_name VARCHAR(50),
+                api_key VARCHAR(255),
+                secret_key VARCHAR(255),
+                password VARCHAR(255),
+                active TINYINT DEFAULT 1,
+                valid TINYINT DEFAULT 0,
+                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS investments (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                telegram_id BIGINT,
+                platform_id INT,
+                status VARCHAR(50),
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id),
+                FOREIGN KEY (platform_id) REFERENCES platforms(id)
             )
         """)
         conn.commit()
