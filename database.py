@@ -7,17 +7,17 @@ from urllib.parse import urlparse
 
 load_dotenv()
 
-DATABASE_URL = os.getenv('DATABASE_URL')
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 def parse_database_url(url):
     result = urlparse(url)
     return {
-        'host': result.hostname,
-        'user': result.username,
-        'password': result.password,
-        'database': result.path.lstrip('/'),
-        'port': result.port or 3306,
-        'auth_plugin': 'mysql_native_password'
+        "host": result.hostname,
+        "user": result.username,
+        "password": result.password,
+        "database": result.path.lstrip("/"),
+        "port": result.port or 3306,
+        "auth_plugin": "mysql_native_password",
     }
 
 db_config = parse_database_url(DATABASE_URL)
@@ -39,23 +39,42 @@ def create_tables():
     conn = get_connection()
     if conn:
         cursor = conn.cursor()
+        # users table
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                telegram_id BIGINT UNIQUE,
-                binance_api_key VARCHAR(255),
-                binance_secret_key VARCHAR(255),
-                kucoin_api_key VARCHAR(255),
-                kucoin_secret_key VARCHAR(255),
-                kucoin_password VARCHAR(255),
-                invested_amount FLOAT DEFAULT 0,
-                investment_active BOOLEAN DEFAULT TRUE,
-                profit FLOAT DEFAULT 0
-            )
+        CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            telegram_id BIGINT UNIQUE,
+            binance_api_key VARCHAR(255),
+            binance_secret_key VARCHAR(255),
+            kucoin_api_key VARCHAR(255),
+            kucoin_secret_key VARCHAR(255),
+            kucoin_password VARCHAR(255),
+            invested_amount FLOAT DEFAULT 0,
+            profit FLOAT DEFAULT 0,
+            active_platforms JSON NULL,
+            is_investing BOOLEAN DEFAULT FALSE
+        )
         """)
-        conn.commit()
+        # owner wallet table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS owner_wallet (
+            id INT PRIMARY KEY CHECK (id = 1),
+            wallet_address VARCHAR(255),
+            profit_percentage FLOAT DEFAULT 10 -- نسبة ربح البوت
+        )
+        """)
+        # investment history
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS investment_history (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            telegram_id BIGINT,
+            platform VARCHAR(50),
+            operation VARCHAR(20),
+            amount FLOAT,
+            price FLOAT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
         cursor.close()
+        conn.commit()
         conn.close()
-
-if __name__ == "__main__":
-    create_tables()
