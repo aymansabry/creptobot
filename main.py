@@ -437,6 +437,8 @@ async def run_arbitrage_loop(user_telegram_id):
 
 # ----------------------- START BOT -----------------------
 
+import asyncio
+
 if __name__ == "__main__":
     async def main():
         await bot.delete_webhook()
