@@ -13,20 +13,15 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from binance.client import Client as BinanceClient
-from kucoin.client import Market, Trade, Client as KucoinClient
-
-import openai
+from kucoin.client import Market, Trade
 
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if not BOT_TOKEN or not DATABASE_URL or not OPENAI_API_KEY:
-    raise Exception("❌ Missing environment variables BOT_TOKEN or DATABASE_URL or OPENAI_API_KEY")
-
-openai.api_key = OPENAI_API_KEY
+if not BOT_TOKEN or not DATABASE_URL:
+    raise Exception("❌ Missing environment variables BOT_TOKEN or DATABASE_URL")
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -103,13 +98,14 @@ async def verify_binance_keys(api_key, secret_key):
 
 async def verify_kucoin_keys(api_key, secret_key, passphrase):
     try:
-        client = KucoinClient(api_key, secret_key, passphrase)
-        accounts = client.get_accounts()
+        trade_client = Trade(api_key, secret_key, passphrase)
+        # استخدم get_accounts وليس get_account
+        accounts = trade_client.get_accounts()
         if accounts:
             return True
-        else:
-            return False
-    except Exception:
+        return False
+    except Exception as e:
+        print(f"Error verifying KuCoin keys: {e}")
         return False
 
 def user_platforms_keyboard(user: User):
@@ -203,7 +199,7 @@ async def secret_key_received(message: types.Message, state: FSMContext):
     if platform == "binance":
         valid = await verify_binance_keys(data["api_key"], secret_key)
         if not valid:
-            await message.answer("❌ المفاتيح غير صحيحة، أرسل /start وحاول مرة أخرى.")
+            await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة. تأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
             await state.finish()
             return
         db = SessionLocal()
@@ -274,41 +270,8 @@ async def start_invest_handler(call: types.CallbackQuery):
 # 3- استثمار وهمي
 @dp.callback_query_handler(lambda c: c.data == "menu_fake_invest")
 async def fake_invest_handler(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    db.close()
-
-    if not user or (not user.binance_active and not user.kucoin_active):
-        await call.answer("❌ لم تقم بربط أي منصة تداول.")
-        return
-
     await call.answer()
-    # جلب بيانات أسعار حقيقية ولكن بدون تنفيذ صفقات
-    text = "🛑 الاستثمار الوهمي (باستخدام بيانات حقيقية بدون استخدام أموال فعلية):\n\n"
-    try:
-        binance_client = create_binance_client(user)
-        kucoin_market, _ = create_kucoin_clients(user)
-
-        binance_price = None
-        kucoin_price = None
-
-        if binance_client:
-            binance_price = float(binance_client.get_symbol_ticker(symbol="BTCUSDT")['price'])
-            text += f"Binance BTC/USDT السعر الحالي: {binance_price}\n"
-        if kucoin_market:
-            kucoin_price = float(kucoin_market.get_ticker("BTC-USDT")['price'])
-            text += f"KuCoin BTC/USDT السعر الحالي: {kucoin_price}\n"
-
-        if binance_price and kucoin_price:
-            diff = abs(binance_price - kucoin_price)
-            text += f"\nفرق السعر بين المنصتين: {diff:.2f} USDT\n"
-        else:
-            text += "\nلا توجد بيانات كافية حالياً للمنصتين."
-
-    except Exception as e:
-        text += f"\nحدث خطأ أثناء جلب البيانات: {str(e)}"
-
-    await call.message.edit_text(text, reply_markup=main_menu_keyboard())
+    await call.message.edit_text("🛑 الاستثمار الوهمي غير مفعل حاليا. سيتم إضافته لاحقاً.")
 
 # 4- كشف حساب عن فترة
 @dp.callback_query_handler(lambda c: c.data == "menu_report")
@@ -363,27 +326,11 @@ async def report_end_date_received(message: types.Message, state: FSMContext):
     except Exception:
         await message.answer("❌ تنسيق التاريخ غير صحيح. استخدم: YYYY-MM-DD")
 
-# 5- حالة السوق (تحليل مع OpenAI)
+# 5- حالة السوق (تحليل مبسط - يمكن ربط OpenAI لاحقاً)
 @dp.callback_query_handler(lambda c: c.data == "menu_market_status")
 async def market_status_handler(call: types.CallbackQuery):
     await call.answer()
-
-    try:
-        prompt = (
-            "قدم لي تقريرًا مختصرًا عن حالة سوق العملات الرقمية اليوم. "
-            "اذكر أسعار بعض العملات الشهيرة مثل BTC، ETH، BNB، XRP، ADA مع توقعات صعود أو هبوط بناءً على المؤشرات الاقتصادية وآراء الخبراء."
-        )
-        response = openai.Completion.create(
-            model="text-davinci-003",
-            prompt=prompt,
-            max_tokens=300,
-            temperature=0.7,
-        )
-        market_analysis = response.choices[0].text.strip()
-    except Exception as e:
-        market_analysis = f"❌ خطأ أثناء جلب تحليل السوق: {str(e)}"
-
-    text = f"📈 حالة السوق الحالية:\n{market_analysis}"
+    text = "📈 حالة السوق الحالية:\n- السوق مستقر نسبياً.\n- نصيحتي: ابدأ استثمارك إذا كنت مستعداً للمخاطرة."
     await call.message.edit_text(text, reply_markup=main_menu_keyboard())
 
 # 6- إيقاف الاستثمار
@@ -448,4 +395,39 @@ async def run_arbitrage_loop(user_telegram_id):
 
             if binance_price and kucoin_price:
                 if binance_price + threshold < kucoin_price:
-                    if binance_client and kucoin_trade
+                    if binance_client and kucoin_trade:
+                        binance_client.order_market_buy(symbol="BTCUSDT", quantity=amount_to_trade)
+                        kucoin_trade.create_market_order('BTC-USDT', 'sell', size=str(amount_to_trade))
+                        profit = (kucoin_price - binance_price) * amount_to_trade
+                        trade_type = "Buy Binance / Sell KuCoin"
+                elif kucoin_price + threshold < binance_price:
+                    if kucoin_trade and binance_client:
+                        kucoin_trade.create_market_order('BTC-USDT', 'buy', size=str(amount_to_trade))
+                        binance_client.order_market_sell(symbol="BTCUSDT", quantity=amount_to_trade)
+                        profit = (binance_price - kucoin_price) * amount_to_trade
+                        trade_type = "Buy KuCoin / Sell Binance"
+
+            if trade_type:
+                trade = TradeLog(
+                    user_id=user.id,
+                    trade_type=trade_type,
+                    amount=amount_to_trade,
+                    price=min(binance_price, kucoin_price),
+                    profit=profit,
+                )
+                db.add(trade)
+                db.commit()
+                await bot.send_message(user.telegram_id,
+                    f"✅ تمت عملية المراجحة:\n{trade_type}\nالكمية: {amount_to_trade:.6f} BTC\nالربح المتوقع: {profit:.2f} USDT")
+            else:
+                await bot.send_message(user.telegram_id, "⚠️ لا توجد فرص مراجحة حالياً.")
+
+            await asyncio.sleep(30)
+        except Exception as e:
+            await bot.send_message(user.telegram_id, f"❌ خطأ أثناء المراجحة: {str(e)}")
+            await asyncio.sleep(60)
+
+# ----------------------- START BOT -----------------------
+
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
