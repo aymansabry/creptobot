@@ -1,41 +1,41 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder
-import handlers
-import database
+from telegram.ext import ApplicationBuilder, MessageHandler, filters
+from database import init_db, SessionLocal, User
 
-# تحميل متغيرات البيئة
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")  # mysql://user:pass@host/dbname
-
 if not TOKEN:
-    raise ValueError("❌ يجب تعيين TELEGRAM_BOT_TOKEN في ملف .env")
+    raise ValueError("TELEGRAM_BOT_TOKEN مش موجود في .env")
 
-if not DATABASE_URL:
-    raise ValueError("❌ يجب تعيين DATABASE_URL في ملف .env")
-
-# تهيئة تسجيل الأحداث
+# تشغيل اللوج
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # تهيئة قاعدة البيانات
-database.init_db()
+init_db()
 
-def main():
-    # بناء تطبيق البوت
-    application = ApplicationBuilder().token(TOKEN).build()
+async def start(update, context):
+    user_id = update.effective_user.id
+    username = update.effective_user.username
 
-    # تسجيل المعالجات
-    handlers.register_handlers(application)
+    db = SessionLocal()
+    if not db.query(User).filter_by(telegram_id=user_id).first():
+        new_user = User(telegram_id=user_id, username=username)
+        db.add(new_user)
+        db.commit()
+        logger.info(f"تم تسجيل مستخدم جديد: {username}")
+    db.close()
 
-    logger.info("🚀 البوت شغال...")
-    application.run_polling()
+    await update.message.reply_text("أهلاً! تم تسجيلك في النظام ✅")
 
 if __name__ == "__main__":
-    main()
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+    logger.info("🚀 البوت شغال...")
+    app.run_polling()
