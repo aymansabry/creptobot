@@ -1,3 +1,4 @@
+# database.py
 import os
 import mysql.connector
 from mysql.connector import errorcode
@@ -48,10 +49,8 @@ def create_tables():
                 kucoin_secret_key VARCHAR(255),
                 kucoin_password VARCHAR(255),
                 invested_amount FLOAT DEFAULT 0,
-                profit FLOAT DEFAULT 0,
-                wallet_address VARCHAR(255),
-                active_platforms JSON,
-                is_active BOOLEAN DEFAULT TRUE
+                investment_active BOOLEAN DEFAULT TRUE,
+                profit FLOAT DEFAULT 0
             )
         """)
         conn.commit()
