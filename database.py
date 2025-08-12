@@ -1,106 +1,116 @@
-import os
+# database.py
 import mysql.connector
 from mysql.connector import Error
+import os
 
-# قراءة رابط قاعدة البيانات من المتغير البيئي
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+mysqlconnector://user:pass@localhost:3306/dbname")
+# قراءة بيانات الاتصال من البيئة
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "bot_db")
 
-# استخراج بيانات الاتصال من DATABASE_URL
-def parse_database_url(url):
-    if not url.startswith("mysql"):
-        raise ValueError("DATABASE_URL يجب أن يكون بصيغة MySQL")
-    url = url.replace("mysql+mysqlconnector://", "").replace("mysql://", "")
-    user_pass, host_db = url.split("@")
-    user, password = user_pass.split(":")
-    host_port, dbname = host_db.split("/")
-    if ":" in host_port:
-        host, port = host_port.split(":")
-        port = int(port)
-    else:
-        host = host_port
-        port = 3306
-    return {
-        "user": user,
-        "password": password,
-        "host": host,
-        "port": port,
-        "database": dbname
-    }
-
-db_config = parse_database_url(DATABASE_URL)
-
-# الاتصال بقاعدة البيانات
 def get_connection():
     try:
-        conn = mysql.connector.connect(**db_config)
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
         return conn
     except Error as e:
-        print(f"❌ خطأ في الاتصال بقاعدة البيانات: {e}")
-        raise
+        print(f"[DB] Connection error: {e}")
+        return None
 
-# إنشاء الجداول إذا لم تكن موجودة
 def init_db():
     conn = get_connection()
-    cur = conn.cursor()
+    if conn:
+        cur = conn.cursor()
 
-    # جدول الإعدادات
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            k VARCHAR(255) PRIMARY KEY,
-            v TEXT
-        )
-    """)
+        # إنشاء جدول المستخدمين
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                telegram_id BIGINT UNIQUE,
+                role VARCHAR(20) DEFAULT 'client'
+            )
+        """)
 
-    # جدول المستخدمين
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            telegram_id BIGINT UNIQUE,
-            role VARCHAR(50) DEFAULT 'client',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        # إنشاء جدول المحافظ
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS wallets (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                exchange_name VARCHAR(50),
+                api_key TEXT,
+                api_secret TEXT,
+                is_active BOOLEAN DEFAULT TRUE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
 
-    # جدول المحافظ API
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS wallets (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
-            exchange_name VARCHAR(50),
-            api_key TEXT,
-            api_secret TEXT,
-            active BOOLEAN DEFAULT TRUE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    """)
+        # إنشاء جدول الإعدادات
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                k VARCHAR(100) UNIQUE,
+                v TEXT
+            )
+        """)
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        # إنشاء جدول الصفقات
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                exchange_name VARCHAR(50),
+                symbol VARCHAR(20),
+                side VARCHAR(10),
+                price DECIMAL(18,8),
+                amount DECIMAL(18,8),
+                profit_loss DECIMAL(18,8),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
 
-# جلب إعداد
+        # إنشاء جدول السجلات
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("[DB] Database initialized successfully.")
+
 def get_setting(key, default=None):
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT v FROM settings WHERE k=%s", (key,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    return row[0] if row else default
+    if conn:
+        cur = conn.cursor()
+        cur.execute("SELECT v FROM settings WHERE k=%s", (key,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else default
+    return default
 
-# تعديل أو إضافة إعداد
 def set_setting(key, value):
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO settings (k, v) VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE v=%s
-    """, (key, value, value))
-    conn.commit()
-    cur.close()
-    conn.close()
+    if conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO settings (k, v) VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE v=%s
+        """, (key, value, value))
+        conn.commit()
+        cur.close()
+        conn.close()
 
-
+# تنفيذ إنشاء الجداول عند تشغيل الملف
 if __name__ == "__main__":
     init_db()
-    print("✅ قاعدة البيانات جاهزة")
