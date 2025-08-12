@@ -57,3 +57,6 @@ def create_tables():
         conn.commit()
         cursor.close()
         conn.close()
+
+if __name__ == "__main__":
+    create_tables()
