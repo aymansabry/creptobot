@@ -1,57 +1,80 @@
 # utils.py
 import ccxt
 import database
-import decimal
 
-# وضع التنفيذ (True = فعلي, False = وهمي)
-REAL_TRADING = True
+# النسبة الافتراضية لعمولة البوت
+BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))
 
-def get_exchange(name, api_key=None, api_secret=None, sandbox=False):
-    """
-    إنشاء اتصال بالمنصة مع إمكانية تفعيل وضع التجربة (Sandbox).
-    """
-    exchange_class = getattr(ccxt, name.lower())()
-    if api_key and api_secret:
-        exchange_class.apiKey = api_key
-        exchange_class.secret = api_secret
+# --- إنشاء كائن منصة (Exchange Object) ---
+def get_exchange_client(exchange_name, api_key, api_secret, sandbox=False):
+    exchange_class = getattr(ccxt, exchange_name)
+    exchange = exchange_class({
+        "apiKey": api_key,
+        "secret": api_secret,
+        "enableRateLimit": True
+    })
 
-    if sandbox and hasattr(exchange_class, 'set_sandbox_mode'):
-        exchange_class.set_sandbox_mode(True)
+    if sandbox and hasattr(exchange, "set_sandbox_mode"):
+        exchange.set_sandbox_mode(True)
 
-    return exchange_class
+    return exchange
 
-def adjust_amount(exchange, symbol, amount):
-    """
-    ضبط كمية الطلب بناءً على precision المنصة.
-    """
+# --- جلب precision للرمز ---
+def get_symbol_precision(exchange, symbol):
     markets = exchange.load_markets()
-    market = markets.get(symbol, None)
-    if not market:
-        raise ValueError(f"⚠️ الزوج {symbol} غير مدعوم على {exchange.id}")
+    if symbol in markets:
+        market = markets[symbol]
+        amount_prec = market['precision'].get('amount', 8)
+        price_prec = market['precision'].get('price', 8)
+        return amount_prec, price_prec
+    return 8, 8
 
-    precision = market['precision']['amount']
-    return float(round(decimal.Decimal(amount), precision))
+# --- تنفيذ أمر شراء ---
+def place_market_buy(exchange, symbol, amount):
+    amount_prec, _ = get_symbol_precision(exchange, symbol)
+    amount = round(amount, amount_prec)
+    order = exchange.create_market_buy_order(symbol, amount)
+    return order
 
-def place_market_order(exchange, symbol, side, amount):
-    """
-    تنفيذ أمر سوق (Market Order) مع مراعاة الـ precision.
-    """
-    try:
-        adj_amount = adjust_amount(exchange, symbol, amount)
-        order = exchange.create_order(symbol, "market", side, adj_amount)
-        return order
-    except Exception as e:
-        return {"error": str(e)}
+# --- تنفيذ أمر بيع ---
+def place_market_sell(exchange, symbol, amount):
+    amount_prec, _ = get_symbol_precision(exchange, symbol)
+    amount = round(amount, amount_prec)
+    order = exchange.create_market_sell_order(symbol, amount)
+    return order
 
-def execute_trade(exchange_name, symbol, side, amount, user_id):
-    """
-    تنفيذ الصفقة (فعلي أو وهمي) بناءً على وضع التداول.
-    """
-    api_key, api_secret = database.get_api_keys_for_exchange(exchange_name, user_id)
-    exchange = get_exchange(exchange_name, api_key, api_secret, sandbox=not REAL_TRADING)
+# --- تجربة تنفيذ أمر (Test Mode) ---
+def test_trade(exchange, symbol, amount, side):
+    print(f"[SANDBOX] {side.upper()} {amount} {symbol}")
+    return {
+        "id": "test-order-123",
+        "symbol": symbol,
+        "side": side,
+        "amount": amount,
+        "status": "filled"
+    }
 
-    if not REAL_TRADING:
-        return {"status": "sandbox", "message": f"تمت محاكاة {side} {amount} من {symbol} على {exchange_name}"}
+# --- تنفيذ صفقة ---
+def execute_trade(telegram_id, symbol, amount, side="buy", test_only=False):
+    exchanges = database.get_user_exchanges(telegram_id)
+    results = []
 
-    return place_market_order(exchange, symbol, side, amount)
+    for ex in exchanges:
+        client = get_exchange_client(ex['name'], ex['api_key'], ex['api_secret'], sandbox=ex['sandbox'])
+
+        if test_only or ex['sandbox']:
+            result = test_trade(client, symbol, amount, side)
+        else:
+            if side == "buy":
+                result = place_market_buy(client, symbol, amount)
+            else:
+                result = place_market_sell(client, symbol, amount)
+
+        results.append({"exchange": ex['name'], "result": result})
+
+    return results
+
+# --- حساب العمولة ---
+def calculate_bot_fee(amount):
+    return round((amount * BOT_FEE_PERCENT) / 100, 8)
 
