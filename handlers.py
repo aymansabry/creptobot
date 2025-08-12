@@ -1,81 +1,133 @@
 # handlers.py
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackContext
-import utils
+import telebot
 import database
+import utils
+import market_analysis
 
-# ==============================
-# قوائم المستخدم
-# ==============================
-def user_main_menu(update: Update, context: CallbackContext):
-    keyboard = [
-        [InlineKeyboardButton("📋 تسجيل أو تعديل بيانات التداول", callback_data='register_data')],
-        [InlineKeyboardButton("💰 مبلغ الاستثمار", callback_data='investment_amount')],
-        [InlineKeyboardButton("🚀 ابدأ استثمار", callback_data='start_investment')],
-        [InlineKeyboardButton("🎯 استثمار وهمي", callback_data='virtual_investment')],
-        [InlineKeyboardButton("📑 كشف حساب عن فترة", callback_data='account_statement')],
-        [InlineKeyboardButton("📊 حالة السوق", callback_data='market_status')],
-        [InlineKeyboardButton("⛔ إيقاف الاستثمار", callback_data='stop_investment')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("اختر من القائمة:", reply_markup=reply_markup)
+BOT_TOKEN = database.get_setting("bot_token", "")
+bot = telebot.TeleBot(BOT_TOKEN)
 
+# ==========================
+# القوائم الرئيسية للمستخدم
+# ==========================
+@bot.message_handler(commands=["start"])
+def send_welcome(message):
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("📊 تسجيل أو تعديل بيانات التداول", "💰 محفظة المستخدم")
+    markup.add("🚀 ابدأ استثمار", "🧪 استثمار وهمي")
+    markup.add("📄 كشف حساب", "📈 حالة السوق")
+    markup.add("⛔ إيقاف الاستثمار")
+    bot.send_message(message.chat.id, "👋 أهلاً بك! اختر من القائمة:", reply_markup=markup)
+
+# ==========================
 # تسجيل أو تعديل بيانات التداول
-def register_data(update: Update, context: CallbackContext):
-    # هنا نعرض قائمة اختيار المنصة
-    keyboard = [
-        [InlineKeyboardButton("Binance", callback_data='platform_binance')],
-        [InlineKeyboardButton("KuCoin", callback_data='platform_kucoin')],
-        [InlineKeyboardButton("Bybit", callback_data='platform_bybit')],
-        [InlineKeyboardButton("🔙 رجوع", callback_data='main_menu')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.callback_query.message.reply_text("اختر المنصة:", reply_markup=reply_markup)
+# ==========================
+@bot.message_handler(func=lambda m: m.text == "📊 تسجيل أو تعديل بيانات التداول")
+def register_api(message):
+    bot.send_message(message.chat.id, "📌 اختر المنصة (Binance / KuCoin / Bybit):")
+    bot.register_next_step_handler(message, get_platform)
 
-# تحقق API
-def check_api(update: Update, context: CallbackContext, platform, api_key, api_secret):
-    valid = utils.validate_api_keys(platform, api_key, api_secret)
-    if valid:
-        update.message.reply_text("✅ المفاتيح صحيحة وتم حفظها.")
-        database.save_user_api(update.message.chat_id, platform, api_key, api_secret)
-    else:
-        update.message.reply_text("❌ المفاتيح غير صحيحة. أعد المحاولة.")
+def get_platform(message):
+    platform = message.text.strip().lower()
+    bot.send_message(message.chat.id, f"🔑 أدخل API Key الخاصة بـ {platform}:")
+    bot.register_next_step_handler(message, lambda m: get_api_key(m, platform))
 
-# مبلغ الاستثمار
-def set_investment_amount(update: Update, context: CallbackContext):
-    update.message.reply_text("💵 أدخل مبلغ الاستثمار المطلوب:")
+def get_api_key(message, platform):
+    api_key = message.text.strip()
+    bot.send_message(message.chat.id, "🔐 أدخل API Secret:")
+    bot.register_next_step_handler(message, lambda m: save_api_keys(m, platform, api_key))
 
-# ابدأ استثمار
-def start_investment(update: Update, context: CallbackContext):
-    update.message.reply_text("🚀 جاري بدء الاستثمار بالمعلومات المسجلة...")
+def save_api_keys(message, platform, api_key):
+    api_secret = message.text.strip()
+    try:
+        exchange = utils.get_exchange(platform, api_key, api_secret)
+        exchange.load_markets()  # التحقق من صحة الاتصال
+        database.save_api_key(message.chat.id, platform, api_key, api_secret)
+        bot.send_message(message.chat.id, "✅ تم حفظ مفاتيح API بنجاح (اتصال صحيح).")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ في الاتصال: {e}")
 
+# ==========================
+# بدء الاستثمار
+# ==========================
+@bot.message_handler(func=lambda m: m.text == "🚀 ابدأ استثمار")
+def start_investment(message):
+    bot.send_message(message.chat.id, "💲 أدخل زوج العملة (مثل BTC/USDT):")
+    bot.register_next_step_handler(message, get_symbol_for_trade)
+
+def get_symbol_for_trade(message):
+    symbol = message.text.upper()
+    bot.send_message(message.chat.id, "📈 أدخل الكمية:")
+    bot.register_next_step_handler(message, lambda m: execute_real_trade(m, symbol))
+
+def execute_real_trade(message, symbol):
+    try:
+        amount = float(message.text)
+        result = utils.execute_trade(message.chat.id, "binance", symbol, "buy", amount)
+        bot.send_message(message.chat.id, f"✅ تم التنفيذ: {result}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+# ==========================
 # استثمار وهمي
-def virtual_investment(update: Update, context: CallbackContext):
-    update.message.reply_text("📈 عرض نتائج الاستثمار الوهمي...")
+# ==========================
+@bot.message_handler(func=lambda m: m.text == "🧪 استثمار وهمي")
+def start_virtual(message):
+    bot.send_message(message.chat.id, "💲 أدخل زوج العملة (مثل BTC/USDT):")
+    bot.register_next_step_handler(message, get_symbol_for_virtual)
 
-# كشف حساب
-def account_statement(update: Update, context: CallbackContext):
-    update.message.reply_text("📅 أدخل تاريخ بداية الفترة:")
+def get_symbol_for_virtual(message):
+    symbol = message.text.upper()
+    bot.send_message(message.chat.id, "📈 أدخل الكمية:")
+    bot.register_next_step_handler(message, lambda m: execute_virtual_trade(m, symbol))
 
+def execute_virtual_trade(message, symbol):
+    try:
+        amount = float(message.text)
+        database.set_sandbox_mode(True)
+        result = utils.execute_trade(message.chat.id, "binance", symbol, "buy", amount)
+        bot.send_message(message.chat.id, f"💡 تنفيذ وهمي: {result}")
+        database.set_sandbox_mode(False)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+# ==========================
 # حالة السوق
-def market_status(update: Update, context: CallbackContext):
-    update.message.reply_text("📊 تحليل السوق جاري...")
+# ==========================
+@bot.message_handler(func=lambda m: m.text == "📈 حالة السوق")
+def market_status(message):
+    analysis = market_analysis.get_market_summary()
+    bot.send_message(message.chat.id, analysis)
 
+# ==========================
+# كشف حساب
+# ==========================
+@bot.message_handler(func=lambda m: m.text == "📄 كشف حساب")
+def account_statement(message):
+    bot.send_message(message.chat.id, "📅 أدخل تاريخ البداية (YYYY-MM-DD):")
+    bot.register_next_step_handler(message, get_start_date)
+
+def get_start_date(message):
+    start_date = message.text.strip()
+    bot.send_message(message.chat.id, "📅 أدخل تاريخ النهاية (YYYY-MM-DD):")
+    bot.register_next_step_handler(message, lambda m: show_statement(m, start_date))
+
+def show_statement(message, start_date):
+    end_date = message.text.strip()
+    report = database.get_trades_report(message.chat.id, start_date, end_date)
+    bot.send_message(message.chat.id, f"📊 تقرير الصفقات:\n{report}")
+
+# ==========================
 # إيقاف الاستثمار
-def stop_investment(update: Update, context: CallbackContext):
-    update.message.reply_text("⛔ تم إيقاف الاستثمار لهذا الحساب.")
+# ==========================
+@bot.message_handler(func=lambda m: m.text == "⛔ إيقاف الاستثمار")
+def stop_investment(message):
+    database.stop_user_investment(message.chat.id)
+    bot.send_message(message.chat.id, "⛔ تم إيقاف الاستثمار لهذا الحساب.")
 
-# ==============================
-# قوائم المدير
-# ==============================
-def admin_main_menu(update: Update, context: CallbackContext):
-    keyboard = [
-        [InlineKeyboardButton("✏️ تعديل نسبة ربح البوت", callback_data='edit_fee')],
-        [InlineKeyboardButton("👥 عدد المستخدمين إجمالي", callback_data='total_users')],
-        [InlineKeyboardButton("🟢 عدد المستخدمين أونلاين", callback_data='online_users')],
-        [InlineKeyboardButton("📑 تقارير الاستثمار إجمالاً", callback_data='investment_reports')],
-        [InlineKeyboardButton("🛠 حالة البوت برمجياً", callback_data='bot_status')],
-        [InlineKeyboardButton("📋 التداول كمستخدم عادي", callback_data='user_mode')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("قائمة المدير:", reply_markup=reply_markup)
+# ==========================
+# تشغيل البوت
+# ==========================
+def run():
+    print("🚀 البوت يعمل الآن...")
+    bot.infinity_polling()
