@@ -1,75 +1,40 @@
-import os
 import mysql.connector
-from mysql.connector import errorcode
+from mysql.connector import Error
 from dotenv import load_dotenv
-from urllib.parse import urlparse
+import os
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "trading_bot")
 
-def parse_database_url(url):
-    result = urlparse(url)
-    return {
-        "host": result.hostname,
-        "user": result.username,
-        "password": result.password,
-        "database": result.path.lstrip("/"),
-        "port": result.port or 3306,
-        "auth_plugin": "mysql_native_password",
-    }
-
-db_config = parse_database_url(DATABASE_URL)
-
-def get_connection():
+def create_connection():
     try:
-        conn = mysql.connector.connect(**db_config)
-        return conn
-    except mysql.connector.Error as err:
-        if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-            print("خطأ في اسم المستخدم أو كلمة المرور")
-        elif err.errno == errorcode.ER_BAD_DB_ERROR:
-            print("قاعدة البيانات غير موجودة")
-        else:
-            print(err)
+        connection = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+        if connection.is_connected():
+            cursor = connection.cursor()
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
+            print("✅ Database connected and ready.")
+        return connection
+    except Error as e:
+        print(f"❌ Error: {e}")
         return None
 
-def create_tables():
-    conn = get_connection()
-    if conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            telegram_id BIGINT UNIQUE,
-            binance_api_key VARCHAR(255),
-            binance_secret_key VARCHAR(255),
-            kucoin_api_key VARCHAR(255),
-            kucoin_secret_key VARCHAR(255),
-            invested_amount FLOAT DEFAULT 0,
-            profit FLOAT DEFAULT 0,
-            active_platforms JSON NULL,
-            is_investing BOOLEAN DEFAULT FALSE
+def get_db_connection():
+    try:
+        connection = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
         )
-        """)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS owner_wallet (
-            id INT PRIMARY KEY CHECK (id = 1),
-            wallet_address VARCHAR(255),
-            profit_percentage FLOAT DEFAULT 10
-        )
-        """)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS investment_history (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            telegram_id BIGINT,
-            platform VARCHAR(50),
-            operation VARCHAR(20),
-            amount FLOAT,
-            price FLOAT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-        cursor.close()
-        conn.commit()
-        conn.close()
+        return connection
+    except Error as e:
+        print(f"❌ DB Connection Error: {e}")
+        return None
