@@ -1,6 +1,6 @@
 aiogram==2.25.1
-SQLAlchemy==1.4.49
-PyMySQL==1.0.2
-python-binance==1.0.15
-kucoin-python==0.9.2
-openai==0.27.6
+SQLAlchemy
+PyMySQL
+python-binance
+kucoin-python
+openai
