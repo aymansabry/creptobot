@@ -1,4 +1,4 @@
-aiogram==2.25.1
+aiogram
 SQLAlchemy==1.4.49
 PyMySQL==1.0.2
 python-binance==1.0.15
