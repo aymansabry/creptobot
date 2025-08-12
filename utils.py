@@ -1,62 +1,68 @@
+# utils.py
 import ccxt
 import decimal
-from database import get_setting
+from database import get_setting, set_setting, get_connection
+from datetime import datetime
 
-# قراءة الإعدادات العامة من قاعدة البيانات
-BOT_FEE_PERCENT = float(get_setting("bot_fee_percent", "10"))
-USE_SANDBOX = get_setting("use_sandbox", "true").lower() == "true"
+# إعدادات عامة
+BOT_FEE_PERCENT = float(get_setting("bot_fee_percent", 10))
+USE_SANDBOX = get_setting("use_sandbox", "false").lower() == "true"
 
-# دالة ضبط الرقم حسب دقة السوق
-def adjust_amount(exchange, symbol, amount):
-    try:
-        markets = exchange.load_markets()
-        precision = markets[symbol]['precision']['amount']
-        return float(round(decimal.Decimal(amount), precision))
-    except Exception as e:
-        print(f"⚠️ خطأ في adjust_amount: {e}")
-        return amount
+# ====== سجلات ======
+def log_message(message):
+    conn = get_connection()
+    if conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO logs (message) VALUES (%s)", (message,))
+        conn.commit()
+        cur.close()
+        conn.close()
 
-# إنشاء اتصال مع المنصة
-def create_exchange(name, api_key, api_secret, sandbox=False):
-    name = name.lower()
-    if name == "binance":
-        exchange = ccxt.binance({
-            'apiKey': api_key,
-            'secret': api_secret,
-            'enableRateLimit': True
-        })
-    elif name == "kucoin":
-        exchange = ccxt.kucoin({
-            'apiKey': api_key,
-            'secret': api_secret,
-            'enableRateLimit': True
-        })
-    else:
-        raise ValueError(f"منصة غير مدعومة: {name}")
-
-    if sandbox:
-        if name == "binance":
-            exchange.set_sandbox_mode(True)
-        elif name == "kucoin":
-            exchange.urls['api'] = exchange.urls['test']
+# ====== إعداد منصة التداول ======
+def get_exchange(name, api_key, api_secret):
+    exchange_class = getattr(ccxt, name)
+    exchange = exchange_class({
+        'apiKey': api_key,
+        'secret': api_secret
+    })
+    if USE_SANDBOX and hasattr(exchange, 'set_sandbox_mode'):
+        exchange.set_sandbox_mode(True)
     return exchange
 
-# تنفيذ أمر سوق
-def place_market_order(exchange, symbol, side, amount):
-    try:
-        amount = adjust_amount(exchange, symbol, amount)
-        order = exchange.create_market_order(symbol, side, amount)
-        print(f"✅ تم تنفيذ أمر سوق: {order}")
-        return order
-    except Exception as e:
-        print(f"❌ فشل تنفيذ أمر السوق: {e}")
-        return None
+# ====== جلب دقة السعر والحجم ======
+def get_symbol_precision(exchange, symbol):
+    markets = exchange.load_markets()
+    market = markets.get(symbol)
+    if not market:
+        raise ValueError(f"Symbol {symbol} not found on {exchange.id}")
+    price_precision = market['precision'].get('price', 8)
+    amount_precision = market['precision'].get('amount', 8)
+    return price_precision, amount_precision
 
-# تنفيذ أمر سوق وهمي للتجربة
-def place_sandbox_market_order(exchange, symbol, side, amount):
-    try:
-        print(f"[SANDBOX] تنفيذ أمر سوق وهمي {side} {amount} {symbol}")
-        return {"symbol": symbol, "side": side, "amount": amount, "status": "sandbox_executed"}
-    except Exception as e:
-        print(f"❌ خطأ في sandbox: {e}")
-        return None
+# ====== تنفيذ أمر سوق ======
+def execute_market_order(exchange, symbol, side, amount):
+    price_precision, amount_precision = get_symbol_precision(exchange, symbol)
+    amount = float(decimal.Decimal(amount).quantize(decimal.Decimal(f"1e-{amount_precision}")))
+    
+    order = exchange.create_market_order(symbol, side, amount)
+    log_message(f"Market Order: {symbol} {side} {amount} - {order}")
+    return order
+
+# ====== حساب الربح بعد العمولة ======
+def calculate_profit_with_fee(profit):
+    fee = (BOT_FEE_PERCENT / 100) * profit
+    net_profit = profit - fee
+    return net_profit
+
+# ====== إضافة صفقة للتاريخ ======
+def save_trade(user_id, exchange_name, symbol, side, price, amount, profit_loss):
+    conn = get_connection()
+    if conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO trades (user_id, exchange_name, symbol, side, price, amount, profit_loss)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (user_id, exchange_name, symbol, side, price, amount, profit_loss))
+        conn.commit()
+        cur.close()
+        conn.close()
