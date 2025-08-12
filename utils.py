@@ -1,61 +1,64 @@
 # utils.py
 import ccxt
-import logging
-from decimal import Decimal, ROUND_DOWN
-from config import SANDBOX_MODE
-import database
+import math
+from database import get_setting  # دالة لاستدعاء إعداد من جدول settings
 
-# قراءة نسبة عمولة البوت من قاعدة البيانات
-BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))
+SANDBOX_MODE = True  # يمكن التحكم فيها ديناميكياً لو حبينا من قاعدة البيانات
 
-# إعداد اللوج
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# دالة تجهيز الاتصال بالمنصة
-def get_exchange(exchange_name, api_key, api_secret):
+def validate_api_keys(platform, api_key, api_secret):
     try:
-        exchange_class = getattr(ccxt, exchange_name)
-        exchange = exchange_class({
-            'apiKey': api_key,
-            'secret': api_secret
-        })
-        if SANDBOX_MODE and hasattr(exchange, 'set_sandbox_mode'):
-            exchange.set_sandbox_mode(True)
-        return exchange
-    except AttributeError:
-        raise ValueError(f"Exchange '{exchange_name}' not supported.")
-
-# دالة لضبط الكمية حسب precision المنصة
-def adjust_amount(exchange, symbol, amount):
-    markets = exchange.load_markets()
-    market = markets.get(symbol)
-    if not market:
-        raise ValueError(f"Market {symbol} not found on {exchange.id}")
-    precision = market['precision']['amount']
-    return float(Decimal(amount).quantize(Decimal(10) ** -precision, rounding=ROUND_DOWN))
-
-# دالة لتنفيذ أمر Market
-def place_market_order(exchange, symbol, side, amount):
-    amount = adjust_amount(exchange, symbol, amount)
-    logger.info(f"Placing {side} market order: {symbol}, amount={amount}")
-    if SANDBOX_MODE:
-        logger.info("[SANDBOX] Order not executed on real market.")
-        return {"sandbox": True, "symbol": symbol, "side": side, "amount": amount}
-    return exchange.create_market_order(symbol, side, amount)
-
-# حساب الربح بعد عمولة البوت
-def calculate_profit(total_profit):
-    fee = (BOT_FEE_PERCENT / 100) * total_profit
-    net_profit = total_profit - fee
-    return round(net_profit, 8), round(fee, 8)
-
-# التحقق من API Keys
-def validate_api_keys(exchange_name, api_key, api_secret):
-    try:
-        exchange = get_exchange(exchange_name, api_key, api_secret)
-        exchange.fetch_balance()
+        exchange = get_exchange(platform, api_key, api_secret, test_connection=True)
+        # تحقق بسيط بجلب الرصيد أو الأسواق حسب المنصة
+        if platform in ['binance', 'kucoin']:
+            exchange.fetch_balance()
+        else:
+            return False
         return True
-    except Exception as e:
-        logger.error(f"API Key validation failed for {exchange_name}: {str(e)}")
+    except Exception:
         return False
+
+def get_exchange(platform, api_key=None, api_secret=None, test_connection=False):
+    exchange_class = getattr(ccxt, platform)
+    exchange = exchange_class({
+        'apiKey': api_key,
+        'secret': api_secret,
+        'enableRateLimit': True,
+    })
+
+    if SANDBOX_MODE:
+        if platform == 'binance':
+            exchange.set_sandbox_mode(True)
+        elif platform == 'kucoin':
+            exchange.urls['api'] = exchange.urls['test']
+            exchange.headers = {'x-sandbox': 'true'}
+
+    if test_connection:
+        exchange.load_markets()
+
+    return exchange
+
+def place_market_order(exchange, symbol, side, amount):
+    markets = exchange.load_markets()
+    market = markets[symbol]
+    precision = market['precision']['amount']
+
+    amount_rounded = round_down(amount, precision)
+    order = exchange.create_order(symbol, 'market', side, amount_rounded)
+    return order
+
+def round_down(number, decimals=0):
+    if decimals < 0:
+        raise ValueError("decimals must be >= 0")
+    factor = 10 ** decimals
+    return math.floor(number * factor) / factor
+
+def calculate_profit(gross_profit):
+    try:
+        fee_percent_str = get_setting("bot_fee_percent", "10")  # افتراض 10%
+        fee_percent = float(fee_percent_str) / 100
+    except Exception:
+        fee_percent = 0.10  # قيمة افتراضية
+
+    fee = gross_profit * fee_percent
+    net_profit = gross_profit - fee
+    return round(net_profit, 8), round(fee, 8)
