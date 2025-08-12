@@ -1,67 +1,103 @@
 # database.py
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
+import os
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
+from dotenv import load_dotenv
 import datetime
-from config import DATABASE_URL, DEFAULT_BOT_FEE_PERCENT
 
-# تهيئة SQLAlchemy
-Base = declarative_base()
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL is not set in .env")
+
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine)
 
-# نموذج الإعدادات
-class Setting(Base):
-    __tablename__ = "settings"
-    id = Column(Integer, primary_key=True, index=True)
-    k = Column(String(255), unique=True, nullable=False)
-    v = Column(Text, nullable=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# نموذج المستخدم
+Base = declarative_base()
+
+# مثال على جداول المستخدم والمنصات والإعدادات
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     telegram_id = Column(Integer, unique=True, index=True)
-    role = Column(String(20), default="client")
+    username = Column(String(100), nullable=True)
+    role = Column(String(20), default="client")  # client, admin
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# نموذج حساب المنصة
-class ExchangeAccount(Base):
-    __tablename__ = "exchange_accounts"
+class ExchangeAPIKey(Base):
+    __tablename__ = "exchange_api_keys"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
-    exchange_name = Column(String(50), nullable=False)
-    api_key = Column(String(255), nullable=False)
-    api_secret = Column(String(255), nullable=False)
-    status = Column(String(10), default="inactive")  # active / inactive
+    user_id = Column(Integer, index=True)  # FK to User.id (can add FK constraint if want)
+    exchange_name = Column(String(50))  # e.g. "binance", "kucoin"
+    api_key = Column(String(255))
+    api_secret = Column(String(255))
+    enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# إنشاء الجداول
+class Investment(Base):
+    __tablename__ = "investments"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)
+    amount = Column(Float)
+    is_real = Column(Boolean, default=False)  # true = actual investment, false = simulated
+    status = Column(String(20), default="pending")  # pending, running, stopped, completed
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class TradeRecord(Base):
+    __tablename__ = "trade_records"
+    id = Column(Integer, primary_key=True, index=True)
+    investment_id = Column(Integer, index=True)
+    symbol = Column(String(20))
+    side = Column(String(4))  # buy or sell
+    price = Column(Float)
+    amount = Column(Float)
+    fee = Column(Float)
+    profit = Column(Float)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Setting(Base):
+    __tablename__ = "settings"
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(50), unique=True)
+    value = Column(String(255))
+
 def init_db():
     Base.metadata.create_all(bind=engine)
-    # إدخال قيمة افتراضية للـ bot_fee_percent إذا غير موجودة
+
+def get_db():
     db = SessionLocal()
-    if not db.query(Setting).filter_by(k="bot_fee_percent").first():
-        setting = Setting(k="bot_fee_percent", v=str(DEFAULT_BOT_FEE_PERCENT))
-        db.add(setting)
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Utility functions examples:
+
+def get_setting(db, key: str, default=None):
+    try:
+        setting = db.query(Setting).filter(Setting.key == key).first()
+        if setting:
+            return setting.value
+        return default
+    except SQLAlchemyError:
+        return default
+
+def set_setting(db, key: str, value: str):
+    try:
+        setting = db.query(Setting).filter(Setting.key == key).first()
+        if setting:
+            setting.value = value
+        else:
+            setting = Setting(key=key, value=value)
+            db.add(setting)
         db.commit()
-    db.close()
-
-# قراءة إعداد
-def get_setting(key, default=None):
-    db = SessionLocal()
-    setting = db.query(Setting).filter_by(k=key).first()
-    db.close()
-    return setting.v if setting else default
-
-# تعديل/إضافة إعداد
-def set_setting(key, value):
-    db = SessionLocal()
-    setting = db.query(Setting).filter_by(k=key).first()
-    if setting:
-        setting.v = str(value)
-    else:
-        setting = Setting(k=key, v=str(value))
-        db.add(setting)
-    db.commit()
-    db.close()
+        return True
+    except SQLAlchemyError:
+        db.rollback()
+        return False
