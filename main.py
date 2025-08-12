@@ -1,131 +1,196 @@
 import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from database import Database, ExchangePlatform, User, ExchangeConnection
-from config import Config
-from datetime import datetime, timedelta
-from typing import Dict, Any, List
-import asyncio
+import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+import ccxt
+from database import get_connection, create_tables
+from dotenv import load_dotenv
 
-# إعدادات التسجيل
+load_dotenv()
+
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# تعريف الكائنات الأساسية
-bot = Bot(token=Config.USER_BOT_TOKEN, parse_mode="HTML")
-dp = Dispatcher(bot, storage=MemoryStorage())
-db = Database()
+# States for tracking user input
+STATE_NONE = 0
+STATE_BINANCE_API = 1
+STATE_BINANCE_SECRET = 2
+STATE_KUCOIN_API = 3
+STATE_KUCOIN_SECRET = 4
+STATE_INVEST_AMOUNT = 5
 
-# حالات المستخدم
-class UserStates(StatesGroup):
-    waiting_exchange = State()
-    waiting_api_key = State()
-    waiting_api_secret = State()
-    waiting_passphrase = State()
-    waiting_investment = State()
-    waiting_report_date = State()
-    waiting_confirmation = State()
+user_states = {}
 
-async def on_startup(dp):
-    """دالة تنفيذية عند بدء تشغيل البوت"""
-    logger.info("Bot started successfully")
-    if hasattr(Config, 'ADMIN_ID') and Config.ADMIN_ID:
-        try:
-            await bot.send_message(
-                Config.ADMIN_ID,
-                "✅ البوت يعمل الآن\n"
-                f"وقت البدء: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send startup notification: {e}")
-
-async def on_shutdown(dp):
-    """دالة تنفيذية عند إيقاف البوت"""
-    logger.info("Bot is shutting down...")
-    if hasattr(Config, 'ADMIN_ID') and Config.ADMIN_ID:
-        try:
-            await bot.send_message(Config.ADMIN_ID, "⛔ البوت يتوقف الآن")
-        except Exception as e:
-            logger.error(f"Failed to send shutdown notification: {e}")
-    
-    await dp.storage.close()
-    await dp.storage.wait_closed()
-    logger.info("Bot shutdown completed")
-
-async def get_main_keyboard() -> types.ReplyKeyboardMarkup:
-    """إنشاء لوحة المفاتيح الرئيسية"""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.row("📊 بيانات التداول", "💰 إدارة الاستثمار")
-    keyboard.row("📈 حالة السوق", "📅 كشف حساب")
-    return keyboard
-
-async def show_main_menu(message: types.Message):
-    """عرض القائمة الرئيسية"""
-    try:
-        keyboard = await get_main_keyboard()
-        await message.answer("مرحباً بك في بوت التداول الذكي!\nاختر من القائمة:", reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error in show_main_menu: {e}")
-        await message.answer("❌ حدث خطأ في عرض القائمة الرئيسية")
-
-@dp.message_handler(commands=['start', 'help'])
-async def start(message: types.Message):
-    """معالجة أمر /start"""
-    try:
-        user = db.get_user(message.from_user.id)
-        if not user:
-            user_data = {
-                'telegram_id': message.from_user.id,
-                'username': message.from_user.username,
-                'first_name': message.from_user.first_name,
-                'last_name': message.from_user.last_name or '',
-                'mode': 'demo',
-                'investment_amount': 0.0,
-                'balance': 0.0,
-                'demo_balance': 10000.0,
-                'is_active': True
-            }
-            user = db.add_user(user_data)
-            if user:
-                await message.answer("🎉 تم تسجيلك بنجاح في النظام!")
-            else:
-                await message.answer("⚠️ حدث خطأ أثناء التسجيل، يرجى المحاولة لاحقاً")
-                return
-        
-        await show_main_menu(message)
-    except Exception as e:
-        logger.error(f"Error in /start command: {e}")
-        await message.answer("❌ حدث خطأ أثناء معالجة طلبك، يرجى المحاولة لاحقاً")
-
-async def set_bot_commands():
-    """تعيين أوامر البوت"""
-    commands = [
-        types.BotCommand("start", "بدء استخدام البوت"),
-        types.BotCommand("help", "مساعدة")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("إعداد مفاتيح API", callback_data='set_api')],
+        [InlineKeyboardButton("تعيين المبلغ المستثمر", callback_data='set_amount')],
+        [InlineKeyboardButton("عرض الأرباح", callback_data='show_profit')]
     ]
-    await bot.set_my_commands(commands)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("مرحبًا بك! اختر من القائمة:", reply_markup=reply_markup)
 
-if __name__ == '__main__':
-    from aiogram import executor
-    
-    # تنظيف أي عمليات معلقة
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(bot.delete_webhook(drop_pending_updates=True))
-    loop.run_until_complete(set_bot_commands())
-    
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if query.data == 'set_api':
+        user_states[user_id] = STATE_BINANCE_API
+        await query.message.reply_text("الرجاء إدخال Binance API Key:")
+    elif query.data == 'set_amount':
+        user_states[user_id] = STATE_INVEST_AMOUNT
+        await query.message.reply_text("الرجاء إدخال المبلغ المستثمر (رقم فقط):")
+    elif query.data == 'show_profit':
+        profit = get_user_profit(user_id)
+        await query.message.reply_text(f"الأرباح الحالية: {profit} دولار (تقريبي)")
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text.strip()
+
+    state = user_states.get(user_id, STATE_NONE)
+
+    if state == STATE_BINANCE_API:
+        set_user_binance_api(user_id, api_key=text)
+        user_states[user_id] = STATE_BINANCE_SECRET
+        await update.message.reply_text("الرجاء إدخال Binance Secret Key:")
+    elif state == STATE_BINANCE_SECRET:
+        set_user_binance_secret(user_id, secret_key=text)
+        user_states[user_id] = STATE_KUCOIN_API
+        await update.message.reply_text("الرجاء إدخال KuCoin API Key:")
+    elif state == STATE_KUCOIN_API:
+        set_user_kucoin_api(user_id, api_key=text)
+        user_states[user_id] = STATE_KUCOIN_SECRET
+        await update.message.reply_text("الرجاء إدخال KuCoin Secret Key:")
+    elif state == STATE_KUCOIN_SECRET:
+        set_user_kucoin_secret(user_id, secret_key=text)
+        user_states[user_id] = STATE_NONE
+        valid = await validate_api_keys(user_id)
+        if valid:
+            await update.message.reply_text("تم التحقق من مفاتيح API بنجاح!")
+        else:
+            await update.message.reply_text("خطأ في مفاتيح API، الرجاء إعادة المحاولة.")
+    elif state == STATE_INVEST_AMOUNT:
+        if text.replace('.', '', 1).isdigit():
+            amount = float(text)
+            set_user_invest_amount(user_id, amount)
+            user_states[user_id] = STATE_NONE
+            await update.message.reply_text(f"تم تعيين المبلغ المستثمر: {amount} دولار")
+        else:
+            await update.message.reply_text("الرجاء إدخال رقم صالح.")
+
+def set_user_binance_api(user_id, api_key):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO users (telegram_id, binance_api_key) VALUES (%s, %s) ON DUPLICATE KEY UPDATE binance_api_key=%s", (user_id, api_key, api_key))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def set_user_binance_secret(user_id, secret_key):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET binance_secret_key=%s WHERE telegram_id=%s", (secret_key, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def set_user_kucoin_api(user_id, api_key):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET kucoin_api_key=%s WHERE telegram_id=%s", (api_key, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def set_user_kucoin_secret(user_id, secret_key):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET kucoin_secret_key=%s WHERE telegram_id=%s", (secret_key, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def set_user_invest_amount(user_id, amount):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET invested_amount=%s WHERE telegram_id=%s", (amount, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_user_profit(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT profit FROM users WHERE telegram_id=%s", (user_id,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return result[0] if result else 0
+
+async def validate_api_keys(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT binance_api_key, binance_secret_key, kucoin_api_key, kucoin_secret_key FROM users WHERE telegram_id=%s", (user_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if not row:
+        return False
+
+    binance_api, binance_secret, kucoin_api, kucoin_secret = row
+
+    # تحقق بسيط من Binance API
     try:
-        executor.start_polling(
-            dp,
-            skip_updates=True,
-            timeout=30,
-            relax=0.5,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown
-        )
+        binance = ccxt.binance({
+            'apiKey': binance_api,
+            'secret': binance_secret,
+            'enableRateLimit': True,
+        })
+        balance = await run_in_executor(binance.fetch_balance)
+        # لو جاب بيانات، المفاتيح صالحة
     except Exception as e:
-        logger.critical(f"Failed to start bot: {e}")
+        print(f"Binance API Error: {e}")
+        return False
+
+    # تحقق بسيط من KuCoin API
+    try:
+        kucoin = ccxt.kucoin({
+            'apiKey': kucoin_api,
+            'secret': kucoin_secret,
+            'enableRateLimit': True,
+        })
+        balance = await run_in_executor(kucoin.fetch_balance)
+    except Exception as e:
+        print(f"KuCoin API Error: {e}")
+        return False
+
+    return True
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+executor = ThreadPoolExecutor(max_workers=5)
+
+async def run_in_executor(func, *args):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, lambda: func(*args))
+
+def main():
+    create_tables()
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+
+    print("Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
