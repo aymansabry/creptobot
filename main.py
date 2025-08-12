@@ -5,6 +5,8 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 import ccxt
 from database import get_connection, create_tables
 from dotenv import load_dotenv
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
 
@@ -70,11 +72,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state == STATE_KUCOIN_SECRET:
         set_user_kucoin_secret(user_id, secret_key=text)
         user_states[user_id] = STATE_NONE
-        valid = await validate_api_keys(user_id)
+        valid = await validate_api_keys(user_id, update)
         if valid:
-            await update.message.reply_text("تم التحقق من مفاتيح API بنجاح!")
+            await update.message.reply_text("🎉 تم التحقق من جميع مفاتيح API بنجاح!")
         else:
-            await update.message.reply_text("خطأ في مفاتيح API، الرجاء إعادة المحاولة.")
+            await update.message.reply_text("⚠️ فشل التحقق من مفاتيح API. يرجى مراجعة الرسائل السابقة ومحاولة التصحيح.")
     elif state == STATE_INVEST_AMOUNT:
         if text.replace('.', '', 1).isdigit():
             amount = float(text)
@@ -133,7 +135,13 @@ def get_user_profit(user_id):
     conn.close()
     return result[0] if result else 0
 
-async def validate_api_keys(user_id):
+executor = ThreadPoolExecutor(max_workers=5)
+
+async def run_in_executor(func, *args):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, lambda: func(*args))
+
+async def validate_api_keys(user_id, update=None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT binance_api_key, binance_secret_key, kucoin_api_key, kucoin_secret_key FROM users WHERE telegram_id=%s", (user_id,))
@@ -145,7 +153,27 @@ async def validate_api_keys(user_id):
 
     binance_api, binance_secret, kucoin_api, kucoin_secret = row
 
-    # تحقق بسيط من Binance API
+    binance_guide = (
+        "للحصول على مفاتيح API في Binance:\n"
+        "1. سجل دخولك إلى حساب Binance.\n"
+        "2. اذهب إلى [API Management](https://www.binance.com/en/my/settings/api-management).\n"
+        "3. أنشئ API جديدة، وأعطها اسمًا.\n"
+        "4. تأكد من تفعيل صلاحيات: قراءة المعلومات (Enable Reading)، التداول (Enable Spot & Margin Trading).\n"
+        "5. لا تُفعّل صلاحية السحب (Withdraw) لأمان أكبر.\n"
+        "6. انسخ الـ API Key والـ Secret Key وأدخلهم للبوت."
+    )
+
+    kucoin_guide = (
+        "للحصول على مفاتيح API في KuCoin:\n"
+        "1. سجل دخولك إلى حساب KuCoin.\n"
+        "2. اذهب إلى [API Management](https://www.kucoin.com/account/api).\n"
+        "3. أنشئ API جديدة، وأعطها اسمًا.\n"
+        "4. تأكد من تفعيل صلاحيات: قراءة المعلومات (General Access)، التداول (Trade).\n"
+        "5. لا تُفعّل صلاحية السحب (Withdrawal).\n"
+        "6. انسخ الـ API Key والـ Secret Key وأدخلهم للبوت."
+    )
+
+    # تحقق Binance
     try:
         binance = ccxt.binance({
             'apiKey': binance_api,
@@ -153,12 +181,12 @@ async def validate_api_keys(user_id):
             'enableRateLimit': True,
         })
         balance = await run_in_executor(binance.fetch_balance)
-        # لو جاب بيانات، المفاتيح صالحة
+        await update.message.reply_text("✅ مفاتيح Binance صحيحة.")
     except Exception as e:
-        print(f"Binance API Error: {e}")
+        await update.message.reply_text(f"❌ خطأ في مفاتيح Binance.\n\n{binance_guide}\n\nالخطأ: {e}")
         return False
 
-    # تحقق بسيط من KuCoin API
+    # تحقق KuCoin
     try:
         kucoin = ccxt.kucoin({
             'apiKey': kucoin_api,
@@ -166,20 +194,12 @@ async def validate_api_keys(user_id):
             'enableRateLimit': True,
         })
         balance = await run_in_executor(kucoin.fetch_balance)
+        await update.message.reply_text("✅ مفاتيح KuCoin صحيحة.")
     except Exception as e:
-        print(f"KuCoin API Error: {e}")
+        await update.message.reply_text(f"❌ خطأ في مفاتيح KuCoin.\n\n{kucoin_guide}\n\nالخطأ: {e}")
         return False
 
     return True
-
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-executor = ThreadPoolExecutor(max_workers=5)
-
-async def run_in_executor(func, *args):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, lambda: func(*args))
 
 def main():
     create_tables()
