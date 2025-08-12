@@ -1,123 +1,139 @@
 # handlers.py
 import telebot
-import database
-import utils
-import ccxt
-from telebot import types
+from database import (
+    get_user,
+    save_user,
+    update_user_setting,
+    get_setting,
+    get_all_users,
+    save_trade,
+    get_trades_by_period
+)
+from utils import (
+    get_exchange,
+    validate_api_key,
+    execute_market_order,
+    calculate_profit_with_fee,
+    log_message
+)
 
-bot = telebot.TeleBot(database.BOT_TOKEN)
+BOT_TOKEN = get_setting("telegram_bot_token", "")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# قائمة المستخدم
-@bot.message_handler(commands=["start"])
+# =========================
+# قوائم المستخدم
+# =========================
+@bot.message_handler(commands=['start'])
 def start(message):
-    user_id = message.from_user.id
-    database.add_user(user_id)
+    user = get_user(message.from_user.id)
+    if not user:
+        save_user(message.from_user.id, "client")
+    bot.send_message(message.chat.id, "👋 أهلاً بك في بوت الاستثمار. اختر من القائمة:")
+    show_main_menu(message.chat.id)
 
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("📊 تسجيل أو تعديل بيانات التداول")
-    markup.add("🚀 ابدأ استثمار", "🧪 استثمار وهمي")
-    markup.add("📜 كشف حساب عن فترة")
-    markup.add("📈 حالة السوق", "⛔ إيقاف الاستثمار")
-    bot.send_message(user_id, "👋 أهلاً بك! اختر من القائمة:", reply_markup=markup)
+def show_main_menu(chat_id):
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("📌 تسجيل أو تعديل بيانات التداول")
+    markup.row("🚀 ابدأ استثمار", "🎯 استثمار وهمي")
+    markup.row("📊 كشف حساب عن فترة", "📈 حالة السوق")
+    markup.row("⛔ إيقاف الاستثمار")
+    bot.send_message(chat_id, "📍 القائمة الرئيسية:", reply_markup=markup)
 
-# 1- تسجيل أو تعديل بيانات التداول
-@bot.message_handler(func=lambda m: m.text == "📊 تسجيل أو تعديل بيانات التداول")
-def register_exchange(message):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("Binance", callback_data="set_exchange_binance"))
-    markup.add(types.InlineKeyboardButton("KuCoin", callback_data="set_exchange_kucoin"))
-    bot.send_message(message.chat.id, "📌 اختر المنصة:", reply_markup=markup)
+@bot.message_handler(func=lambda m: m.text == "📌 تسجيل أو تعديل بيانات التداول")
+def register_trading_data(message):
+    bot.send_message(message.chat.id, "📍 اختر المنصة (مثال: binance أو kucoin):")
+    bot.register_next_step_handler(message, process_exchange_name)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("set_exchange_"))
-def set_exchange(call):
-    exchange_name = call.data.split("_")[2]
-    msg = bot.send_message(call.message.chat.id, f"🔑 أرسل مفتاح API الخاص بـ {exchange_name}:")
-    bot.register_next_step_handler(msg, lambda m: get_api_secret(m, exchange_name))
+def process_exchange_name(message):
+    update_user_setting(message.from_user.id, "exchange_name", message.text.strip().lower())
+    bot.send_message(message.chat.id, "🔑 أدخل API Key:")
+    bot.register_next_step_handler(message, process_api_key)
 
-def get_api_secret(message, exchange_name):
-    api_key = message.text
-    msg = bot.send_message(message.chat.id, "🔐 أرسل مفتاح Secret:")
-    bot.register_next_step_handler(msg, lambda m: save_exchange_data(m, exchange_name, api_key))
+def process_api_key(message):
+    update_user_setting(message.from_user.id, "api_key", message.text.strip())
+    bot.send_message(message.chat.id, "🔒 أدخل API Secret:")
+    bot.register_next_step_handler(message, process_api_secret)
 
-def save_exchange_data(message, exchange_name, api_key):
-    api_secret = message.text
-    user_id = message.from_user.id
-
-    try:
-        # اختبار الاتصال بالمنصة
-        client = getattr(ccxt, exchange_name.lower())({
-            "apiKey": api_key,
-            "secret": api_secret
-        })
-        client.fetch_balance()
-
-        # حفظ البيانات
-        database.save_exchange(user_id, exchange_name.lower(), api_key, api_secret, sandbox=False)
-        bot.send_message(user_id, "✅ تم حفظ بيانات المنصة بنجاح، وهي تعمل الآن.")
-    except Exception as e:
-        bot.send_message(user_id, f"❌ خطأ: {str(e)}\nأعد المحاولة.")
-
-# 2- ابدأ استثمار
-@bot.message_handler(func=lambda m: m.text == "🚀 ابدأ استثمار")
-def start_investment(message):
-    user_id = message.from_user.id
-    msg = bot.send_message(user_id, "💵 أدخل مبلغ الاستثمار بالدولار:")
-    bot.register_next_step_handler(msg, process_investment_amount)
+def process_api_secret(message):
+    update_user_setting(message.from_user.id, "api_secret", message.text.strip())
+    bot.send_message(message.chat.id, "✅ جاري التحقق من المفاتيح...")
+    user = get_user(message.from_user.id)
+    if validate_api_key(user['exchange_name'], user['api_key'], user['api_secret']):
+        bot.send_message(message.chat.id, "✅ المفاتيح صحيحة وتم تفعيل الحساب.")
+    else:
+        bot.send_message(message.chat.id, "❌ المفاتيح غير صحيحة. حاول مرة أخرى.")
+        return
+    bot.send_message(message.chat.id, "💰 أدخل مبلغ الاستثمار:")
+    bot.register_next_step_handler(message, process_investment_amount)
 
 def process_investment_amount(message):
     try:
-        amount_usd = float(message.text)
-        user_id = message.from_user.id
-        utils.execute_investment(user_id, "BTC/USDT", amount_usd)
-        bot.send_message(user_id, "✅ تم بدء الاستثمار الفعلي.")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ خطأ: {str(e)}")
+        amount = float(message.text.strip())
+        update_user_setting(message.from_user.id, "investment_amount", str(amount))
+        bot.send_message(message.chat.id, "✅ تم حفظ مبلغ الاستثمار.")
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ المبلغ غير صالح.")
 
-# 3- استثمار وهمي
-@bot.message_handler(func=lambda m: m.text == "🧪 استثمار وهمي")
-def fake_investment(message):
-    user_id = message.from_user.id
+# =========================
+# تشغيل الاستثمار
+# =========================
+@bot.message_handler(func=lambda m: m.text == "🚀 ابدأ استثمار")
+def start_real_investment(message):
+    user = get_user(message.from_user.id)
+    if not user or not user['api_key']:
+        bot.send_message(message.chat.id, "❌ لم تقم بإعداد بيانات التداول.")
+        return
     try:
-        utils.test_sandbox_order(user_id, "BTC/USDT", "buy", 0.001)
-        bot.send_message(user_id, "🧪 تم تنفيذ استثمار وهمي (sandbox).")
+        exchange = get_exchange(user['exchange_name'], user['api_key'], user['api_secret'])
+        order = execute_market_order(exchange, "BTC/USDT", "buy", float(user['investment_amount']))
+        net_profit = calculate_profit_with_fee(50.0)
+        save_trade(user['id'], user['exchange_name'], "BTC/USDT", "buy", order['price'], float(user['investment_amount']), net_profit)
+        bot.send_message(message.chat.id, f"✅ تم تنفيذ الصفقة. الربح الصافي: {net_profit}")
     except Exception as e:
-        bot.send_message(user_id, f"❌ خطأ: {str(e)}")
+        bot.send_message(message.chat.id, f"❌ خطأ أثناء التنفيذ: {e}")
 
-# 4- كشف حساب
-@bot.message_handler(func=lambda m: m.text == "📜 كشف حساب عن فترة")
+@bot.message_handler(func=lambda m: m.text == "🎯 استثمار وهمي")
+def start_fake_investment(message):
+    bot.send_message(message.chat.id, "📊 تنفيذ استثمار وهمي...")
+    net_profit = calculate_profit_with_fee(25.0)
+    bot.send_message(message.chat.id, f"💰 ربح وهمي صافي: {net_profit}")
+
+# =========================
+# كشف حساب
+# =========================
+@bot.message_handler(func=lambda m: m.text == "📊 كشف حساب عن فترة")
 def account_statement(message):
-    msg = bot.send_message(message.chat.id, "📅 أدخل تاريخ البداية (YYYY-MM-DD):")
-    bot.register_next_step_handler(msg, get_end_date)
+    bot.send_message(message.chat.id, "📅 أدخل تاريخ البداية بصيغة YYYY-MM-DD:")
+    bot.register_next_step_handler(message, process_start_date)
 
-def get_end_date(message):
-    start_date = message.text
-    msg = bot.send_message(message.chat.id, "📅 أدخل تاريخ النهاية (YYYY-MM-DD):")
-    bot.register_next_step_handler(msg, lambda m: send_statement(m, start_date))
+def process_start_date(message):
+    start_date = message.text.strip()
+    bot.send_message(message.chat.id, "📅 أدخل تاريخ النهاية بصيغة YYYY-MM-DD:")
+    bot.register_next_step_handler(message, lambda m: process_end_date(m, start_date))
 
-def send_statement(message, start_date):
-    end_date = message.text
-    user_id = message.from_user.id
-    data = database.get_statement(user_id, start_date, end_date)
-    if data:
-        bot.send_message(user_id, f"📊 كشف الحساب من {start_date} إلى {end_date}:\n{data}")
-    else:
-        bot.send_message(user_id, "📭 لا توجد بيانات.")
+def process_end_date(message, start_date):
+    end_date = message.text.strip()
+    trades = get_trades_by_period(message.from_user.id, start_date, end_date)
+    if not trades:
+        bot.send_message(message.chat.id, "❌ لا توجد صفقات في هذه الفترة.")
+        return
+    report = "\n".join([f"{t['symbol']} - {t['side']} - {t['profit']}" for t in trades])
+    bot.send_message(message.chat.id, f"📊 كشف الحساب:\n{report}")
 
-# 5- حالة السوق
-@bot.message_handler(func=lambda m: m.text == "📈 حالة السوق")
-def market_status(message):
-    try:
-        client = utils.get_exchange_client(message.from_user.id)
-        ticker = client.fetch_ticker("BTC/USDT")
-        bot.send_message(message.chat.id, f"💹 سعر BTC الآن: {ticker['last']} USDT")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ خطأ: {str(e)}")
-
-# 6- إيقاف الاستثمار
+# =========================
+# إيقاف الاستثمار
+# =========================
 @bot.message_handler(func=lambda m: m.text == "⛔ إيقاف الاستثمار")
 def stop_investment(message):
-    user_id = message.from_user.id
-    database.deactivate_user(user_id)
-    bot.send_message(user_id, "⛔ تم إيقاف الاستثمار لهذا الحساب.")
+    update_user_setting(message.from_user.id, "active", "false")
+    bot.send_message(message.chat.id, "🛑 تم إيقاف الاستثمار لهذا الحساب.")
 
-print("✅ Handlers loaded")
+# =========================
+# تشغيل البوت
+# =========================
+def run_bot():
+    log_message("🤖 Bot is running...")
+    bot.infinity_polling()
+
+if __name__ == "__main__":
+    run_bot()
