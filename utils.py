@@ -1,80 +1,87 @@
 # utils.py
 import ccxt
 import database
+from decimal import Decimal, ROUND_DOWN
 
-# النسبة الافتراضية لعمولة البوت
+# إعداد نسبة رسوم البوت من الإعدادات أو 10% افتراضي
 BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))
 
-# --- إنشاء كائن منصة (Exchange Object) ---
-def get_exchange_client(exchange_name, api_key, api_secret, sandbox=False):
-    exchange_class = getattr(ccxt, exchange_name)
-    exchange = exchange_class({
-        "apiKey": api_key,
-        "secret": api_secret,
-        "enableRateLimit": True
-    })
+# إنشاء كائن المنصة
+def get_exchange_client(user_id):
+    ex_data = database.get_exchange(user_id)
+    if not ex_data:
+        raise ValueError("❌ لا يوجد بيانات منصة للمستخدم")
 
-    if sandbox and hasattr(exchange, "set_sandbox_mode"):
-        exchange.set_sandbox_mode(True)
-
-    return exchange
-
-# --- جلب precision للرمز ---
-def get_symbol_precision(exchange, symbol):
-    markets = exchange.load_markets()
-    if symbol in markets:
-        market = markets[symbol]
-        amount_prec = market['precision'].get('amount', 8)
-        price_prec = market['precision'].get('price', 8)
-        return amount_prec, price_prec
-    return 8, 8
-
-# --- تنفيذ أمر شراء ---
-def place_market_buy(exchange, symbol, amount):
-    amount_prec, _ = get_symbol_precision(exchange, symbol)
-    amount = round(amount, amount_prec)
-    order = exchange.create_market_buy_order(symbol, amount)
-    return order
-
-# --- تنفيذ أمر بيع ---
-def place_market_sell(exchange, symbol, amount):
-    amount_prec, _ = get_symbol_precision(exchange, symbol)
-    amount = round(amount, amount_prec)
-    order = exchange.create_market_sell_order(symbol, amount)
-    return order
-
-# --- تجربة تنفيذ أمر (Test Mode) ---
-def test_trade(exchange, symbol, amount, side):
-    print(f"[SANDBOX] {side.upper()} {amount} {symbol}")
-    return {
-        "id": "test-order-123",
-        "symbol": symbol,
-        "side": side,
-        "amount": amount,
-        "status": "filled"
+    exchange_class = getattr(ccxt, ex_data["exchange_name"])
+    params = {
+        "apiKey": ex_data["api_key"],
+        "secret": ex_data["api_secret"]
     }
 
-# --- تنفيذ صفقة ---
-def execute_trade(telegram_id, symbol, amount, side="buy", test_only=False):
-    exchanges = database.get_user_exchanges(telegram_id)
-    results = []
+    if ex_data["sandbox"]:
+        params["enableRateLimit"] = True
+        client = exchange_class(params)
+        client.set_sandbox_mode(True)
+    else:
+        client = exchange_class(params)
 
-    for ex in exchanges:
-        client = get_exchange_client(ex['name'], ex['api_key'], ex['api_secret'], sandbox=ex['sandbox'])
+    return client
 
-        if test_only or ex['sandbox']:
-            result = test_trade(client, symbol, amount, side)
-        else:
-            if side == "buy":
-                result = place_market_buy(client, symbol, amount)
-            else:
-                result = place_market_sell(client, symbol, amount)
+# ضبط الكمية حسب دقة المنصة
+def adjust_amount(amount, precision):
+    amount = Decimal(str(amount))
+    precision = Decimal(str(precision))
+    return float(amount.quantize(precision, rounding=ROUND_DOWN))
 
-        results.append({"exchange": ex['name'], "result": result})
+# تنفيذ أمر سوق
+def place_market_order(user_id, symbol, side, amount):
+    client = get_exchange_client(user_id)
+    markets = client.load_markets()
 
-    return results
+    if symbol not in markets:
+        raise ValueError(f"❌ الزوج {symbol} غير موجود في المنصة")
 
-# --- حساب العمولة ---
-def calculate_bot_fee(amount):
-    return round((amount * BOT_FEE_PERCENT) / 100, 8)
+    market = markets[symbol]
+    precision = market.get("precision", {}).get("amount", 6)
+    rounded_amount = adjust_amount(amount, Decimal("1e-{0}".format(precision)))
 
+    order = client.create_market_order(symbol, side, rounded_amount)
+    return order
+
+# تنفيذ عملية استثمار
+def execute_investment(user_id, symbol, amount_usd):
+    client = get_exchange_client(user_id)
+    ticker = client.fetch_ticker(symbol)
+    price = ticker["last"]
+
+    amount = amount_usd / price
+    order = place_market_order(user_id, symbol, "buy", amount)
+
+    # حساب رسوم البوت
+    fee = amount_usd * BOT_FEE_PERCENT / 100
+    print(f"✅ تم تنفيذ الصفقة: شراء {amount} من {symbol} بسعر {price}، رسوم البوت {fee} USD")
+
+    return order
+
+# تنفيذ بيع
+def execute_sell(user_id, symbol, amount):
+    order = place_market_order(user_id, symbol, "sell", amount)
+    print(f"✅ تم بيع {amount} من {symbol}")
+    return order
+
+# وضع اختبار Sandbox
+def test_sandbox_order(user_id, symbol, side, amount):
+    ex_data = database.get_exchange(user_id)
+    if not ex_data:
+        raise ValueError("❌ لا يوجد بيانات منصة للمستخدم")
+
+    # نجبر على التشغيل في وضع sandbox
+    database.save_exchange(
+        ex_data["user_id"],
+        ex_data["exchange_name"],
+        ex_data["api_key"],
+        ex_data["api_secret"],
+        sandbox=True
+    )
+
+    return place_market_order(user_id, symbol, side, amount)
