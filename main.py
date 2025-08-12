@@ -1,52 +1,41 @@
+# main.py
 import os
-import logging
-from dotenv import load_dotenv
-from database import get_setting, init_db
-from utils import (
-    create_exchange,
-    place_market_order,
-    place_sandbox_market_order,
-    USE_SANDBOX
-)
-
-# إعدادات اللوج
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-# تحميل متغيرات البيئة
-load_dotenv()
+from utils import get_exchange, execute_market_order, log_message, save_trade, calculate_profit_with_fee
+from database import get_setting
+from datetime import datetime
 
 def main():
-    # تهيئة قاعدة البيانات
-    init_db()
+    log_message("🚀 Bot started")
 
-    # قراءة الإعدادات من قاعدة البيانات أو من .env
-    exchange_name = get_setting("exchange_name", os.getenv("EXCHANGE_NAME", "binance"))
-    api_key = get_setting("api_key", os.getenv("API_KEY", ""))
-    api_secret = get_setting("api_secret", os.getenv("API_SECRET", ""))
+    # قراءة إعدادات أساسية من قاعدة البيانات
+    exchange_name = get_setting("exchange_name", "binance")
+    api_key = get_setting("api_key", "")
+    api_secret = get_setting("api_secret", "")
+    symbol = get_setting("trade_symbol", "BTC/USDT")
+    trade_side = get_setting("trade_side", "buy").lower()  # buy or sell
+    trade_amount = float(get_setting("trade_amount", "0.001"))
 
-    if not api_key or not api_secret:
-        logging.error("❌ لم يتم إدخال API Key أو API Secret. يرجى ضبط الإعدادات أولاً.")
+    # تجهيز المنصة
+    try:
+        exchange = get_exchange(exchange_name, api_key, api_secret)
+        log_message(f"✅ Connected to {exchange_name} (sandbox={get_setting('use_sandbox', 'false')})")
+    except Exception as e:
+        log_message(f"❌ Error connecting to exchange: {e}")
         return
 
-    # إنشاء الاتصال مع المنصة
-    exchange = create_exchange(exchange_name, api_key, api_secret, sandbox=USE_SANDBOX)
+    # تنفيذ الصفقة
+    try:
+        order = execute_market_order(exchange, symbol, trade_side, trade_amount)
+        log_message(f"📌 Order executed: {order}")
 
-    # مثال لتنفيذ أمر
-    symbol = get_setting("trade_symbol", os.getenv("TRADE_SYMBOL", "BTC/USDT"))
-    side = get_setting("trade_side", os.getenv("TRADE_SIDE", "buy"))
-    amount = float(get_setting("trade_amount", os.getenv("TRADE_AMOUNT", "0.001")))
+        # حساب الربح (افتراضيًا نعتبر ربح وهمي للتجربة)
+        fake_profit = 50.0  # قيمة تجريبية
+        net_profit = calculate_profit_with_fee(fake_profit)
+        save_trade(1, exchange_name, symbol, trade_side, order['price'] if 'price' in order else 0, trade_amount, net_profit)
+        log_message(f"💰 Net profit after fee: {net_profit}")
 
-    if USE_SANDBOX:
-        logging.info("⚠️ التشغيل على وضع Sandbox (تجريبي)")
-        result = place_sandbox_market_order(exchange, symbol, side, amount)
-    else:
-        logging.info("🚀 تنفيذ أمر حقيقي في السوق")
-        result = place_market_order(exchange, symbol, side, amount)
-
-    logging.info(f"نتيجة الصفقة: {result}")
+    except Exception as e:
+        log_message(f"❌ Error executing order: {e}")
 
 if __name__ == "__main__":
     main()
