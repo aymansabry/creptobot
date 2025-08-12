@@ -1,98 +1,57 @@
 # utils.py
 import ccxt
 import database
-import random
-import time
+import decimal
 
-# جلب إعدادات عامة
-BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))  # نسبة العمولة
-SANDBOX_MODE = database.get_setting("sandbox_mode", "false").lower() == "true"
+# وضع التنفيذ (True = فعلي, False = وهمي)
+REAL_TRADING = True
 
-# ==========================
-# إنشاء اتصال بالمنصة
-# ==========================
-def get_exchange(platform, api_key=None, api_secret=None):
-    exchanges = {
-        "binance": ccxt.binance,
-        "kucoin": ccxt.kucoin,
-        "bybit": ccxt.bybit
-    }
-    if platform not in exchanges:
-        raise ValueError(f"المنصة {platform} غير مدعومة.")
+def get_exchange(name, api_key=None, api_secret=None, sandbox=False):
+    """
+    إنشاء اتصال بالمنصة مع إمكانية تفعيل وضع التجربة (Sandbox).
+    """
+    exchange_class = getattr(ccxt, name.lower())()
+    if api_key and api_secret:
+        exchange_class.apiKey = api_key
+        exchange_class.secret = api_secret
 
-    exchange_class = exchanges[platform]
-    exchange = exchange_class({
-        "apiKey": api_key,
-        "secret": api_secret
-    })
+    if sandbox and hasattr(exchange_class, 'set_sandbox_mode'):
+        exchange_class.set_sandbox_mode(True)
 
-    # تفعيل وضع الاختبار إذا كان مفعّل
-    if SANDBOX_MODE:
-        if hasattr(exchange, "set_sandbox_mode"):
-            exchange.set_sandbox_mode(True)
+    return exchange_class
 
-    return exchange
-
-# ==========================
-# الحصول على دقة التداول
-# ==========================
-def get_market_precision(exchange, symbol):
+def adjust_amount(exchange, symbol, amount):
+    """
+    ضبط كمية الطلب بناءً على precision المنصة.
+    """
     markets = exchange.load_markets()
-    market = markets.get(symbol)
+    market = markets.get(symbol, None)
     if not market:
-        raise ValueError(f"زوج {symbol} غير موجود على {exchange.id}")
-    amount_precision = market.get("precision", {}).get("amount", 8)
-    price_precision = market.get("precision", {}).get("price", 8)
-    return amount_precision, price_precision
+        raise ValueError(f"⚠️ الزوج {symbol} غير مدعوم على {exchange.id}")
 
-# ==========================
-# تنفيذ أمر سوق (Market Order)
-# ==========================
+    precision = market['precision']['amount']
+    return float(round(decimal.Decimal(amount), precision))
+
 def place_market_order(exchange, symbol, side, amount):
-    amount_precision, _ = get_market_precision(exchange, symbol)
-    amount = round(amount, amount_precision)
-
-    print(f"🔹 تنفيذ أمر سوق {side} على {symbol} بالكمية {amount} في {exchange.id}")
+    """
+    تنفيذ أمر سوق (Market Order) مع مراعاة الـ precision.
+    """
     try:
-        order = exchange.create_order(symbol, "market", side, amount)
+        adj_amount = adjust_amount(exchange, symbol, amount)
+        order = exchange.create_order(symbol, "market", side, adj_amount)
         return order
     except Exception as e:
-        print(f"❌ فشل تنفيذ الأمر: {e}")
-        return None
+        return {"error": str(e)}
 
-# ==========================
-# تنفيذ صفقة (حقيقية أو وهمية)
-# ==========================
-def execute_trade(telegram_id, platform, symbol, side, amount):
-    user = database.get_user_by_telegram_id(telegram_id)
-    if not user:
-        raise ValueError("المستخدم غير موجود.")
+def execute_trade(exchange_name, symbol, side, amount, user_id):
+    """
+    تنفيذ الصفقة (فعلي أو وهمي) بناءً على وضع التداول.
+    """
+    api_key, api_secret = database.get_api_keys_for_exchange(exchange_name, user_id)
+    exchange = get_exchange(exchange_name, api_key, api_secret, sandbox=not REAL_TRADING)
 
-    # جلب مفاتيح API
-    conn = database.get_connection()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT api_key, api_secret FROM api_keys WHERE user_id=%s AND platform=%s", (user["id"], platform))
-    api_data = cur.fetchone()
-    cur.close()
-    conn.close()
+    if not REAL_TRADING:
+        return {"status": "sandbox", "message": f"تمت محاكاة {side} {amount} من {symbol} على {exchange_name}"}
 
-    if not api_data:
-        raise ValueError("لم يتم ضبط مفاتيح API الخاصة بك.")
+    return place_market_order(exchange, symbol, side, amount)
 
-    exchange = get_exchange(platform, api_data["api_key"], api_data["api_secret"])
-
-    if SANDBOX_MODE:
-        # تنفيذ وهمي
-        fake_price = random.uniform(100, 500)
-        total = amount * fake_price
-        print(f"💡 تنفيذ وهمي {side} {amount} {symbol} بسعر {fake_price} - إجمالي {total}")
-        return {
-            "type": "sandbox",
-            "side": side,
-            "amount": amount,
-            "price": fake_price,
-            "total": total
-        }
-    else:
-        # تنفيذ حقيقي
-        return place_market_order(exchange, symbol, side, amount)
