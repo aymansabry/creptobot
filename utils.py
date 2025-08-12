@@ -1,87 +1,62 @@
-# utils.py
 import ccxt
-import database
-from decimal import Decimal, ROUND_DOWN
+import decimal
+from database import get_setting
 
-# إعداد نسبة رسوم البوت من الإعدادات أو 10% افتراضي
-BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))
+# قراءة الإعدادات العامة من قاعدة البيانات
+BOT_FEE_PERCENT = float(get_setting("bot_fee_percent", "10"))
+USE_SANDBOX = get_setting("use_sandbox", "true").lower() == "true"
 
-# إنشاء كائن المنصة
-def get_exchange_client(user_id):
-    ex_data = database.get_exchange(user_id)
-    if not ex_data:
-        raise ValueError("❌ لا يوجد بيانات منصة للمستخدم")
+# دالة ضبط الرقم حسب دقة السوق
+def adjust_amount(exchange, symbol, amount):
+    try:
+        markets = exchange.load_markets()
+        precision = markets[symbol]['precision']['amount']
+        return float(round(decimal.Decimal(amount), precision))
+    except Exception as e:
+        print(f"⚠️ خطأ في adjust_amount: {e}")
+        return amount
 
-    exchange_class = getattr(ccxt, ex_data["exchange_name"])
-    params = {
-        "apiKey": ex_data["api_key"],
-        "secret": ex_data["api_secret"]
-    }
-
-    if ex_data["sandbox"]:
-        params["enableRateLimit"] = True
-        client = exchange_class(params)
-        client.set_sandbox_mode(True)
+# إنشاء اتصال مع المنصة
+def create_exchange(name, api_key, api_secret, sandbox=False):
+    name = name.lower()
+    if name == "binance":
+        exchange = ccxt.binance({
+            'apiKey': api_key,
+            'secret': api_secret,
+            'enableRateLimit': True
+        })
+    elif name == "kucoin":
+        exchange = ccxt.kucoin({
+            'apiKey': api_key,
+            'secret': api_secret,
+            'enableRateLimit': True
+        })
     else:
-        client = exchange_class(params)
+        raise ValueError(f"منصة غير مدعومة: {name}")
 
-    return client
-
-# ضبط الكمية حسب دقة المنصة
-def adjust_amount(amount, precision):
-    amount = Decimal(str(amount))
-    precision = Decimal(str(precision))
-    return float(amount.quantize(precision, rounding=ROUND_DOWN))
+    if sandbox:
+        if name == "binance":
+            exchange.set_sandbox_mode(True)
+        elif name == "kucoin":
+            exchange.urls['api'] = exchange.urls['test']
+    return exchange
 
 # تنفيذ أمر سوق
-def place_market_order(user_id, symbol, side, amount):
-    client = get_exchange_client(user_id)
-    markets = client.load_markets()
+def place_market_order(exchange, symbol, side, amount):
+    try:
+        amount = adjust_amount(exchange, symbol, amount)
+        order = exchange.create_market_order(symbol, side, amount)
+        print(f"✅ تم تنفيذ أمر سوق: {order}")
+        return order
+    except Exception as e:
+        print(f"❌ فشل تنفيذ أمر السوق: {e}")
+        return None
 
-    if symbol not in markets:
-        raise ValueError(f"❌ الزوج {symbol} غير موجود في المنصة")
-
-    market = markets[symbol]
-    precision = market.get("precision", {}).get("amount", 6)
-    rounded_amount = adjust_amount(amount, Decimal("1e-{0}".format(precision)))
-
-    order = client.create_market_order(symbol, side, rounded_amount)
-    return order
-
-# تنفيذ عملية استثمار
-def execute_investment(user_id, symbol, amount_usd):
-    client = get_exchange_client(user_id)
-    ticker = client.fetch_ticker(symbol)
-    price = ticker["last"]
-
-    amount = amount_usd / price
-    order = place_market_order(user_id, symbol, "buy", amount)
-
-    # حساب رسوم البوت
-    fee = amount_usd * BOT_FEE_PERCENT / 100
-    print(f"✅ تم تنفيذ الصفقة: شراء {amount} من {symbol} بسعر {price}، رسوم البوت {fee} USD")
-
-    return order
-
-# تنفيذ بيع
-def execute_sell(user_id, symbol, amount):
-    order = place_market_order(user_id, symbol, "sell", amount)
-    print(f"✅ تم بيع {amount} من {symbol}")
-    return order
-
-# وضع اختبار Sandbox
-def test_sandbox_order(user_id, symbol, side, amount):
-    ex_data = database.get_exchange(user_id)
-    if not ex_data:
-        raise ValueError("❌ لا يوجد بيانات منصة للمستخدم")
-
-    # نجبر على التشغيل في وضع sandbox
-    database.save_exchange(
-        ex_data["user_id"],
-        ex_data["exchange_name"],
-        ex_data["api_key"],
-        ex_data["api_secret"],
-        sandbox=True
-    )
-
-    return place_market_order(user_id, symbol, side, amount)
+# تنفيذ أمر سوق وهمي للتجربة
+def place_sandbox_market_order(exchange, symbol, side, amount):
+    try:
+        print(f"[SANDBOX] تنفيذ أمر سوق وهمي {side} {amount} {symbol}")
+        return {"symbol": symbol, "side": side, "amount": amount, "status": "sandbox_executed"}
+    except Exception as e:
+        print(f"❌ خطأ في sandbox: {e}")
+        return None
