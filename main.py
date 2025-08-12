@@ -438,4 +438,8 @@ async def run_arbitrage_loop(user_telegram_id):
 # ----------------------- START BOT -----------------------
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    async def main():
+        await bot.delete_webhook()
+        await dp.start_polling()
+
+    asyncio.run(main())
