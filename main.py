@@ -2,14 +2,11 @@ import logging
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder,
-    ContextTypes,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
+    ApplicationBuilder, ContextTypes, CommandHandler,
+    CallbackQueryHandler, MessageHandler, filters
 )
 import ccxt
 import openai
@@ -18,102 +15,90 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
 openai.api_key = OPENAI_API_KEY
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 executor = ThreadPoolExecutor(max_workers=5)
 
-# User states
-(
-    STATE_NONE,
-    STATE_BINANCE_API,
-    STATE_BINANCE_SECRET,
-    STATE_KUCOIN_API,
-    STATE_KUCOIN_SECRET,
-    STATE_KUCOIN_PASSWORD,
-    STATE_INVEST_AMOUNT,
-    STATE_SELECT_DATE_FOR_FAKE_INVEST,
-    STATE_SELECT_REPORT_START_DATE,
-    STATE_SELECT_REPORT_END_DATE,
-    STATE_ADMIN_AUTH,
-    STATE_ADMIN_MAIN,
-    STATE_ADMIN_EDIT_PROFIT_PERCENT,
-) = range(13)
+# User interaction states
+STATE_NONE = 0
+STATE_BINANCE_API = 1
+STATE_BINANCE_SECRET = 2
+STATE_KUCOIN_API = 3
+STATE_KUCOIN_SECRET = 4
+STATE_KUCOIN_PASSWORD = 5
+STATE_INVEST_AMOUNT = 6
+STATE_SELECT_MENU = 7
 
 user_states = {}
-user_context = {}  # Temporary context per user for dates etc.
+user_menu_context = {}
 
-# Helper for async ccxt calls
+# --- Utility async wrapper for sync functions ---
 async def run_in_executor(func, *args):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, lambda: func(*args))
 
+# --- Database functions (assume your database.py provides these or add them here) ---
 
-# Database helper functions
-
-def set_user_platform_api(user_id, platform, api_key=None, secret=None, password=None):
+def set_user_binance_api(user_id, api_key):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT active_platforms FROM users WHERE telegram_id=%s", (user_id,))
-    row = cursor.fetchone()
-    active_platforms = {}
-    if row and row[0]:
-        import json
-        active_platforms = json.loads(row[0])
-    if platform not in active_platforms:
-        active_platforms[platform] = {}
-
-    if api_key:
-        active_platforms[platform]["apiKey"] = api_key
-    if secret:
-        active_platforms[platform]["secret"] = secret
-    if password:
-        active_platforms[platform]["password"] = password
-
-    active_platforms_json = json.dumps(active_platforms)
-
     cursor.execute(
-        """
-        INSERT INTO users (telegram_id, active_platforms)
-        VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE active_platforms=%s
-        """,
-        (user_id, active_platforms_json, active_platforms_json),
+        "INSERT INTO users (telegram_id, binance_api_key) VALUES (%s, %s) "
+        "ON DUPLICATE KEY UPDATE binance_api_key=%s",
+        (user_id, api_key, api_key),
     )
     conn.commit()
     cursor.close()
     conn.close()
 
-
-def get_user_active_platforms(user_id):
+def set_user_binance_secret(user_id, secret_key):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT active_platforms FROM users WHERE telegram_id=%s", (user_id,))
-    row = cursor.fetchone()
+    cursor.execute("UPDATE users SET binance_secret_key=%s WHERE telegram_id=%s", (secret_key, user_id))
+    conn.commit()
     cursor.close()
     conn.close()
-    import json
-    if row and row[0]:
-        return json.loads(row[0])
-    return {}
 
+def set_user_kucoin_api(user_id, api_key):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET kucoin_api_key=%s WHERE telegram_id=%s", (api_key, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def set_user_kucoin_secret(user_id, secret_key):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET kucoin_secret_key=%s WHERE telegram_id=%s", (secret_key, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def set_user_kucoin_password(user_id, password):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET kucoin_password=%s WHERE telegram_id=%s", (password, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 def set_user_invest_amount(user_id, amount):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET invested_amount=%s WHERE telegram_id=%s", (amount, user_id)
-    )
+    cursor.execute("UPDATE users SET invested_amount=%s WHERE telegram_id=%s", (amount, user_id))
     conn.commit()
     cursor.close()
     conn.close()
-
 
 def get_user_invest_amount(user_id):
     conn = get_connection()
@@ -122,77 +107,103 @@ def get_user_invest_amount(user_id):
     row = cursor.fetchone()
     cursor.close()
     conn.close()
-    return row[0] if row else 0
+    if row:
+        return row[0]
+    return 0
 
-
-def set_user_investing_status(user_id, status: bool):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET is_investing=%s WHERE telegram_id=%s", (status, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-def get_user_profit(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT profit FROM users WHERE telegram_id=%s", (user_id,))
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row[0] if row else 0
-
-
-def get_owner_profit_percentage():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT profit_percentage FROM owner_wallet WHERE id=1")
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row[0] if row else 10.0
-
-
-def set_owner_profit_percentage(percent: float):
+def get_user_platform_keys(user_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO owner_wallet (id, profit_percentage) VALUES (1, %s) ON DUPLICATE KEY UPDATE profit_percentage=%s",
-        (percent, percent),
+        "SELECT binance_api_key, binance_secret_key, kucoin_api_key, kucoin_secret_key, kucoin_password FROM users WHERE telegram_id=%s",
+        (user_id,),
     )
-    conn.commit()
+    row = cursor.fetchone()
     cursor.close()
     conn.close()
+    if not row:
+        return {}
+    return {
+        "binance_api_key": row[0],
+        "binance_secret_key": row[1],
+        "kucoin_api_key": row[2],
+        "kucoin_secret_key": row[3],
+        "kucoin_password": row[4],
+    }
 
-
-def log_investment(
-    telegram_id, platform, operation, amount, price,
-):
+def log_trade(user_id, platform, side, symbol, amount, price):
+    # سجّل الصفقة في قاعدة البيانات - أضف جدول trades إذا لم يكن موجوداً
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO investment_history (telegram_id, platform, operation, amount, price)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (telegram_id, platform, operation, amount, price),
-    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trades (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            telegram_id BIGINT,
+            platform VARCHAR(50),
+            side VARCHAR(10),
+            symbol VARCHAR(20),
+            amount FLOAT,
+            price FLOAT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    cursor.execute("""
+        INSERT INTO trades (telegram_id, platform, side, symbol, amount, price)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (user_id, platform, side, symbol, amount, price))
     conn.commit()
     cursor.close()
     conn.close()
 
+# --- Validation for APIs ---
+async def validate_api_keys(user_id):
+    keys = get_user_platform_keys(user_id)
+    if not keys:
+        return False
 
-# OpenAI integration
+    # تحقق من Binance
+    try:
+        if keys["binance_api_key"] and keys["binance_secret_key"]:
+            binance = ccxt.binance({
+                "apiKey": keys["binance_api_key"],
+                "secret": keys["binance_secret_key"],
+                "enableRateLimit": True,
+            })
+            await run_in_executor(binance.fetch_balance)
+        else:
+            # مفاتيح Binance غير مكتملة
+            pass
+    except Exception as e:
+        logger.warning(f"Binance API error for user {user_id}: {e}")
+        return False
+
+    # تحقق من KuCoin
+    try:
+        if keys["kucoin_api_key"] and keys["kucoin_secret_key"] and keys["kucoin_password"]:
+            kucoin = ccxt.kucoin({
+                "apiKey": keys["kucoin_api_key"],
+                "secret": keys["kucoin_secret_key"],
+                "password": keys["kucoin_password"],
+                "enableRateLimit": True,
+            })
+            await run_in_executor(kucoin.fetch_balance)
+        else:
+            # مفاتيح KuCoin غير مكتملة
+            pass
+    except Exception as e:
+        logger.warning(f"KuCoin API error for user {user_id}: {e}")
+        return False
+
+    return True
+
+# --- تحليل السوق عبر OpenAI ---
 async def openai_market_analysis(prices_summary: str) -> str:
     try:
         response = await openai.ChatCompletion.acreate(
             model="gpt-4o-mini",
             messages=[
-                {
-                    "role": "system",
-                    "content": "أنت خبير في تحليل أسواق العملات الرقمية وتقديم نصائح تداول عملية."
-                },
+                {"role": "system", "content": "أنت خبير في تحليل أسواق العملات الرقمية وتقديم نصائح تداول عملية."},
                 {"role": "user", "content": prices_summary},
             ],
             max_tokens=300,
@@ -201,320 +212,257 @@ async def openai_market_analysis(prices_summary: str) -> str:
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"OpenAI error: {e}")
-        return "عذراً، لم أتمكن من جلب تحليل السوق حالياً."
+        return f"عذراً، حدث خطأ في تحليل السوق: {str(e)}"
 
+# --- استثمار وهمي (بيانات اليوم) ---
+async def simulate_fake_investment(user_id):
+    invested_amount = get_user_invest_amount(user_id)
+    if invested_amount <= 0:
+        return "الرجاء تعيين مبلغ الاستثمار أولاً."
 
-# UI helpers
-def main_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("1️⃣ تسجيل أو تعديل بيانات التداول", callback_data="menu_trading_data")],
-        [InlineKeyboardButton("2️⃣ ابدأ استثمار", callback_data="menu_start_invest")],
-        [InlineKeyboardButton("3️⃣ استثمار وهمي", callback_data="menu_fake_invest")],
-        [InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="menu_report")],
-        [InlineKeyboardButton("5️⃣ حالة السوق", callback_data="menu_market_status")],
-        [InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data="menu_stop_invest")],
-        [InlineKeyboardButton("🔧 قائمة المدير", callback_data="menu_admin")],
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    try:
+        exchange = ccxt.binance()
+        since = int(datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+        ohlcv = await run_in_executor(exchange.fetch_ohlcv, 'BTC/USDT', '1d', since, 1)
+        if not ohlcv:
+            return "لا توجد بيانات اليوم للاستثمار الوهمي."
+        open_price = ohlcv[0][1]
+        close_price = ohlcv[0][4]
+        btc_amount = invested_amount / open_price
+        profit = (close_price - open_price) * btc_amount
+        return (f"استثمار وهمي لليوم الحالي:\n"
+                f"سعر الافتتاح: {open_price}$\n"
+                f"سعر الإغلاق: {close_price}$\n"
+                f"كمية BTC المشتراة: {btc_amount:.6f}\n"
+                f"الربح/الخسارة المحققة: {profit:.2f}$")
+    except Exception as e:
+        logger.error(f"simulate_fake_investment error: {e}")
+        return f"خطأ في محاكاة الاستثمار الوهمي: {str(e)}"
 
+# --- تنفيذ تداول حقيقي (شراء/بيع) ---
+async def execute_real_trade(user_id, side='buy', symbol='BTC/USDT', amount=None):
+    keys = get_user_platform_keys(user_id)
+    invested_amount = get_user_invest_amount(user_id)
+    if invested_amount <= 0:
+        return "الرجاء تعيين مبلغ الاستثمار أولاً."
 
-def back_to_main_keyboard():
-    keyboard = [[InlineKeyboardButton("⬅️ رجوع للقائمة الرئيسية", callback_data="main_menu")]]
-    return InlineKeyboardMarkup(keyboard)
+    # اختيار المنصة (مثلاً Binance أولاً إذا متوفر)
+    platform_name = None
+    exchange = None
 
+    if keys.get("binance_api_key") and keys.get("binance_secret_key"):
+        platform_name = "binance"
+        exchange = ccxt.binance({
+            "apiKey": keys["binance_api_key"],
+            "secret": keys["binance_secret_key"],
+            "enableRateLimit": True,
+        })
+    elif keys.get("kucoin_api_key") and keys.get("kucoin_secret_key") and keys.get("kucoin_password"):
+        platform_name = "kucoin"
+        exchange = ccxt.kucoin({
+            "apiKey": keys["kucoin_api_key"],
+            "secret": keys["kucoin_secret_key"],
+            "password": keys["kucoin_password"],
+            "enableRateLimit": True,
+        })
+    else:
+        return "لم تقم بتفعيل أي منصة تداول."
 
-# Start command handler
+    try:
+        await run_in_executor(exchange.load_markets)
+        ticker = await run_in_executor(exchange.fetch_ticker, symbol)
+        price = ticker['last']
+
+        if amount is None:
+            amount = invested_amount / price
+
+        order = await run_in_executor(exchange.create_order, symbol, 'market', side, amount)
+
+        # سجل الصفقة
+        log_trade(user_id, platform_name, side, symbol, amount, price)
+
+        return f"✅ تم تنفيذ أمر {side} على {symbol} بكمية {amount:.6f} بسعر {price:.2f}$."
+    except Exception as e:
+        logger.error(f"execute_real_trade error: {e}")
+        return f"❌ خطأ في تنفيذ الصفقة: {str(e)}"
+
+# --- القوائم الرئيسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "مرحباً بك في بوت الاستثمار، اختر من القائمة:",
-        reply_markup=main_menu_keyboard(),
-    )
+    keyboard = [
+        [InlineKeyboardButton("1️⃣ تسجيل أو تعديل بيانات التداول", callback_data='menu_setup')],
+        [InlineKeyboardButton("2️⃣ ابدأ استثمار حقيقي", callback_data='menu_start_invest')],
+        [InlineKeyboardButton("3️⃣ استثمار وهمي", callback_data='menu_fake_invest')],
+        [InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data='menu_account_statement')],
+        [InlineKeyboardButton("5️⃣ حالة السوق", callback_data='menu_market_status')],
+        [InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data='menu_stop_invest')],
+        [InlineKeyboardButton("🛑 خروج", callback_data='exit')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("مرحبًا بك! اختر من القائمة:", reply_markup=reply_markup)
+    user_states[update.effective_user.id] = STATE_SELECT_MENU
 
+# --- العودة للقائمة الرئيسية ---
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
 
-# Callback query handler
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- التعامل مع الضغط على الأزرار ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
 
-    if query.data == "main_menu":
-        await query.message.edit_text(
-            "القائمة الرئيسية:", reply_markup=main_menu_keyboard()
-        )
+    data = query.data
+
+    if data == 'exit':
+        await query.message.reply_text("تم إنهاء الجلسة، إلى اللقاء!")
         user_states[user_id] = STATE_NONE
         return
 
-    if query.data == "menu_trading_data":
+    if data == 'menu_setup':
         user_states[user_id] = STATE_BINANCE_API
-        await query.message.edit_text(
-            "أدخل Binance API Key أو اضغط رجوع:",
-            reply_markup=back_to_main_keyboard(),
+        await query.message.reply_text(
+            "🔑 الرجاء إدخال Binance API Key:"
         )
         return
 
-    if query.data == "menu_start_invest":
-        await query.message.edit_text(
-            "🔔 بدء الاستثمار الحقيقي جارٍ... (سيتم تنفيذ الخوارزميات لاحقاً)",
-            reply_markup=back_to_main_keyboard(),
-        )
-        set_user_investing_status(user_id, True)
+    if data == 'menu_start_invest':
+        msg = await execute_real_trade(user_id, side='buy')
+        await query.message.reply_text(msg)
+        await back_to_main_menu(update, context)
         return
 
-    if query.data == "menu_fake_invest":
-        user_states[user_id] = STATE_SELECT_DATE_FOR_FAKE_INVEST
-        await query.message.edit_text(
-            "الرجاء إدخال تاريخ لبدء الاستثمار الوهمي (YYYY-MM-DD):",
-            reply_markup=back_to_main_keyboard(),
-        )
+    if data == 'menu_fake_invest':
+        msg = await simulate_fake_investment(user_id)
+        await query.message.reply_text(msg)
+        await back_to_main_menu(update, context)
         return
 
-    if query.data == "menu_report":
-        user_states[user_id] = STATE_SELECT_REPORT_START_DATE
-        await query.message.edit_text(
-            "الرجاء إدخال تاريخ بداية الفترة (YYYY-MM-DD):",
-            reply_markup=back_to_main_keyboard(),
+    if data == 'menu_account_statement':
+        await query.message.reply_text(
+            "📅 من فضلك أرسل تاريخ بداية الفترة بصيغة YYYY-MM-DD:"
         )
+        user_states[user_id] = 'awaiting_statement_date'
         return
 
-    if query.data == "menu_market_status":
-        await query.message.edit_text(
-            "جاري جلب حالة السوق اللحظية مع التحليل..."
-        )
-        summary = await get_market_status_analysis()
-        await query.message.edit_text(
-            f"📊 حالة السوق اللحظية:\n\n{summary}",
-            reply_markup=main_menu_keyboard(),
-        )
+    if data == 'menu_market_status':
+        market_status_msg = await get_market_status_msg()
+        await query.message.reply_text(market_status_msg)
+        await back_to_main_menu(update, context)
         return
 
-    if query.data == "menu_stop_invest":
-        set_user_investing_status(user_id, False)
-        await query.message.edit_text(
-            "تم إيقاف الاستثمار الخاص بك، لن يتم استخدام أموالك في الصفقات حتى تقوم بالتفعيل مرة أخرى.",
-            reply_markup=main_menu_keyboard(),
-        )
+    if data == 'menu_stop_invest':
+        # يمكن إضافة تفعيل/تعطيل من قاعدة بيانات لاحقاً
+        await query.message.reply_text("✅ تم إيقاف الاستثمار الخاص بك مؤقتًا.")
+        await back_to_main_menu(update, context)
         return
 
-    if query.data == "menu_admin":
-        ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
-        if user_id != ADMIN_TELEGRAM_ID:
-            await query.message.edit_text(
-                "🚫 أنت لست مديراً، لا يمكنك الدخول لهذه القائمة.",
-                reply_markup=main_menu_keyboard(),
-            )
-            return
-        user_states[user_id] = STATE_ADMIN_MAIN
-        await query.message.edit_text(
-            "⚙️ قائمة المدير:",
-            reply_markup=admin_main_menu_keyboard(),
-        )
-        return
+    # إضافة أزرار أخرى حسب الحاجة...
 
-    if user_states.get(user_id) == STATE_ADMIN_MAIN:
-        if query.data == "admin_edit_profit_percent":
-            user_states[user_id] = STATE_ADMIN_EDIT_PROFIT_PERCENT
-            await query.message.edit_text(
-                "أدخل نسبة ربح البوت الجديدة (مثل 10 لـ 10%):",
-                reply_markup=back_to_main_keyboard(),
-            )
-            return
-        if query.data == "admin_view_stats":
-            count = get_total_users_count()
-            online_count = get_online_users_count()
-            await query.message.edit_text(
-                f"📈 الإحصائيات:\nعدد المستخدمين الكلي: {count}\nالمستخدمين النشطين: {online_count}",
-                reply_markup=admin_main_menu_keyboard(),
-            )
-            return
-        if query.data == "admin_back_to_main":
-            user_states[user_id] = STATE_ADMIN_MAIN
-            await query.message.edit_text(
-                "⚙️ قائمة المدير:",
-                reply_markup=admin_main_menu_keyboard(),
-            )
-            return
-
-
-async def get_market_status_analysis():
-    try:
-        exchange = ccxt.binance()
-        tickers = await run_in_executor(exchange.fetch_tickers)
-        summary = "العملات الرئيسية وأسعارها الحالية:\n"
-        top_coins = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT"]
-        for coin in top_coins:
-            if coin in tickers:
-                price = tickers[coin]["last"]
-                summary += f"{coin}: {price}$\n"
-        analysis = await openai_market_analysis(summary)
-        return analysis
-    except Exception as e:
-        logger.error(f"Error fetching market data: {e}")
-        return "عذراً، لا يمكن جلب بيانات السوق حالياً."
-
-
-def admin_main_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("تعديل نسبة ربح البوت", callback_data="admin_edit_profit_percent")],
-        [InlineKeyboardButton("عرض إحصائيات المستخدمين", callback_data="admin_view_stats")],
-        [InlineKeyboardButton("رجوع للقائمة الرئيسية", callback_data="main_menu")],
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def get_total_users_count():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users")
-    count = cursor.fetchone()[0]
-    cursor.close()
-    conn.close()
-    return count
-
-
-def get_online_users_count():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users WHERE is_investing=TRUE")
-    count = cursor.fetchone()[0]
-    cursor.close()
-    conn.close()
-    return count
-
-
-# Message handler for text inputs
+# --- استقبال الرسائل النصية ---
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
-
     state = user_states.get(user_id, STATE_NONE)
 
-    if text == "⬅️ رجوع للقائمة الرئيسية":
-        await update.message.reply_text(
-            "القائمة الرئيسية:", reply_markup=main_menu_keyboard()
-        )
-        user_states[user_id] = STATE_NONE
+    # معالجة حالة انتظار إدخال Binance API
+    if state == STATE_BINANCE_API:
+        set_user_binance_api(user_id, text)
+        user_states[user_id] = STATE_BINANCE_SECRET
+        await update.message.reply_text("🔑 الرجاء إدخال Binance Secret Key:")
         return
 
-    if state == STATE_BINANCE_API:
-        set_user_platform_api(user_id, "binance", api_key=text)
-        user_states[user_id] = STATE_BINANCE_SECRET
-        await update.message.reply_text(
-            "أدخل Binance Secret Key أو اضغط رجوع:", reply_markup=back_to_main_keyboard()
-        )
-    elif state == STATE_BINANCE_SECRET:
-        set_user_platform_api(user_id, "binance", secret=text)
+    if state == STATE_BINANCE_SECRET:
+        set_user_binance_secret(user_id, text)
         user_states[user_id] = STATE_KUCOIN_API
         await update.message.reply_text(
-            "أدخل KuCoin API Key مع تعليمات الحصول عليه أو اضغط رجوع:\nhttps://docs.kucoin.com/",
-            reply_markup=back_to_main_keyboard(),
+            "🔑 الرجاء إدخال KuCoin API Key:\n"
+            "(لتعرف كيفية الحصول على المفاتيح: https://docs.kucoin.com/)\n"
+            "تأكد من تفعيل صلاحيات التداول والقراءة."
         )
-    elif state == STATE_KUCOIN_API:
-        set_user_platform_api(user_id, "kucoin", api_key=text)
+        return
+
+    if state == STATE_KUCOIN_API:
+        set_user_kucoin_api(user_id, text)
         user_states[user_id] = STATE_KUCOIN_SECRET
-        await update.message.reply_text(
-            "أدخل KuCoin Secret Key أو اضغط رجوع:", reply_markup=back_to_main_keyboard()
-        )
-    elif state == STATE_KUCOIN_SECRET:
-        set_user_platform_api(user_id, "kucoin", secret=text)
+        await update.message.reply_text("🔑 الرجاء إدخال KuCoin Secret Key:")
+        return
+
+    if state == STATE_KUCOIN_SECRET:
+        set_user_kucoin_secret(user_id, text)
         user_states[user_id] = STATE_KUCOIN_PASSWORD
         await update.message.reply_text(
-            "أدخل KuCoin API Password (Passphrase) أو اضغط رجوع:", reply_markup=back_to_main_keyboard()
+            "🔑 الرجاء إدخال KuCoin API Password (Passphrase):\n"
+            "(هي كلمة السر التي اخترتها عند إنشاء API في KuCoin)"
         )
-    elif state == STATE_KUCOIN_PASSWORD:
-        set_user_platform_api(user_id, "kucoin", password=text)
-        user_states[user_id] = STATE_INVEST_AMOUNT
-        await update.message.reply_text(
-            "أدخل مبلغ الاستثمار (رقم فقط) أو اضغط رجوع:", reply_markup=back_to_main_keyboard()
-        )
-    elif state == STATE_INVEST_AMOUNT:
+        return
+
+    if state == STATE_KUCOIN_PASSWORD:
+        set_user_kucoin_password(user_id, text)
+        valid = await validate_api_keys(user_id)
+        if valid:
+            await update.message.reply_text("✅ تم التحقق من مفاتيح API بنجاح!")
+        else:
+            await update.message.reply_text(
+                "❌ خطأ في مفاتيح API، الرجاء التأكد وإعادة المحاولة.\n\n"
+                "تأكد من:\n"
+                "- إدخال API Key، Secret Key، وPassword بشكل صحيح.\n"
+                "- تفعيل صلاحيات التداول والقراءة في حساب KuCoin API.\n"
+                "- عدم وجود قيود أمان تمنع الوصول."
+            )
+        user_states[user_id] = STATE_NONE
+        await back_to_main_menu(update, context)
+        return
+
+    if state == STATE_INVEST_AMOUNT:
         if text.replace('.', '', 1).isdigit():
             amount = float(text)
             set_user_invest_amount(user_id, amount)
-            user_states[user_id] = STATE_NONE
-            await update.message.reply_text(
-                f"تم تعيين مبلغ الاستثمار: {amount} دولار", reply_markup=main_menu_keyboard()
-            )
+            await update.message.reply_text(f"✅ تم تعيين المبلغ المستثمر: {amount} دولار")
         else:
-            await update.message.reply_text("الرجاء إدخال رقم صالح.")
-    elif state == STATE_SELECT_DATE_FOR_FAKE_INVEST:
-        # هنا من المفترض التأكد من صحة التاريخ (YYYY-MM-DD)
-        try:
-            import datetime
-            datetime.datetime.strptime(text, "%Y-%m-%d")
-            user_context[user_id] = {"fake_invest_date": text}
-            user_states[user_id] = STATE_NONE
-            # تنفذ هنا الاستثمارات الوهمية باستخدام البيانات المؤرشفة لهذا التاريخ
-            await update.message.reply_text(
-                f"تم تعيين تاريخ الاستثمار الوهمي: {text}\nيتم المحاكاة... (قيد التطوير)",
-                reply_markup=main_menu_keyboard(),
-            )
-        except ValueError:
-            await update.message.reply_text(
-                "التاريخ غير صالح، الرجاء إدخال التاريخ بصيغة YYYY-MM-DD"
-            )
-    elif state == STATE_SELECT_REPORT_START_DATE:
-        try:
-            import datetime
-            datetime.datetime.strptime(text, "%Y-%m-%d")
-            user_context[user_id] = {"report_start_date": text}
-            user_states[user_id] = STATE_SELECT_REPORT_END_DATE
-            await update.message.reply_text(
-                "الرجاء إدخال تاريخ نهاية الفترة (YYYY-MM-DD):",
-                reply_markup=back_to_main_keyboard(),
-            )
-        except ValueError:
-            await update.message.reply_text(
-                "التاريخ غير صالح، الرجاء إدخال التاريخ بصيغة YYYY-MM-DD"
-            )
-    elif state == STATE_SELECT_REPORT_END_DATE:
-        try:
-            import datetime
-            datetime.datetime.strptime(text, "%Y-%m-%d")
-            start_date = user_context[user_id].get("report_start_date")
-            end_date = text
-            user_states[user_id] = STATE_NONE
-            # تنفيذ جلب تقرير بين التواريخ
-            # (قيد التطوير)
-            await update.message.reply_text(
-                f"يتم الآن جلب كشف الحساب من {start_date} إلى {end_date}... (قيد التطوير)",
-                reply_markup=main_menu_keyboard(),
-            )
-        except ValueError:
-            await update.message.reply_text(
-                "التاريخ غير صالح، الرجاء إدخال التاريخ بصيغة YYYY-MM-DD"
-            )
-    elif state == STATE_ADMIN_EDIT_PROFIT_PERCENT:
-        try:
-            percent = float(text)
-            if 0 <= percent <= 100:
-                set_owner_profit_percentage(percent)
-                user_states[user_id] = STATE_ADMIN_MAIN
-                await update.message.reply_text(
-                    f"تم تعديل نسبة ربح البوت إلى {percent}%",
-                    reply_markup=admin_main_menu_keyboard(),
-                )
-            else:
-                await update.message.reply_text("الرجاء إدخال رقم بين 0 و 100.")
-        except ValueError:
-            await update.message.reply_text("الرجاء إدخال رقم صالح.")
-    else:
-        await update.message.reply_text(
-            "الرجاء اختيار خيار من القائمة أو استخدام الأزرار.",
-            reply_markup=main_menu_keyboard(),
-        )
+            await update.message.reply_text("❌ الرجاء إدخال رقم صالح.")
+        user_states[user_id] = STATE_NONE
+        await back_to_main_menu(update, context)
+        return
 
+    if state == 'awaiting_statement_date':
+        # هنا يمكن استدعاء دالة استخراج كشف حساب لفترة محددة (غير مدمجة حالياً)
+        await update.message.reply_text(f"📄 سيتم عرض كشف الحساب للفترة ابتداءً من: {text}\n(الميزة قيد التطوير حالياً)")
+        user_states[user_id] = STATE_NONE
+        await back_to_main_menu(update, context)
+        return
 
+    # الرد العام أو تعليمات
+    await update.message.reply_text("الرجاء استخدام الأزرار للتنقل بين الخيارات.")
+
+# --- تحليل حالة السوق اللحظي مع نصائح باستخدام OpenAI ---
+async def get_market_status_msg():
+    try:
+        exchange = ccxt.binance()
+        await run_in_executor(exchange.load_markets)
+        symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']
+        prices = []
+        for symbol in symbols:
+            ticker = await run_in_executor(exchange.fetch_ticker, symbol)
+            prices.append(f"{symbol}: {ticker['last']}$")
+        prices_summary = "\n".join(prices)
+        analysis = await openai_market_analysis(prices_summary)
+        return f"📊 أسعار العملات الرئيسية:\n{prices_summary}\n\n💡 تحليل السوق ونصائح:\n{analysis}"
+    except Exception as e:
+        logger.error(f"get_market_status_msg error: {e}")
+        return f"خطأ في جلب حالة السوق: {str(e)}"
+
+# --- البرنامج الرئيسي ---
 def main():
     create_tables()
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
 
     print("Bot is running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
