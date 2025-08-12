@@ -1,74 +1,61 @@
+# utils.py
 import ccxt
-import os
+import logging
 from decimal import Decimal, ROUND_DOWN
+from config import SANDBOX_MODE
 import database
 
-# قراءة إعدادات من قاعدة البيانات
-BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))  # نسبة العمولة
-USE_SANDBOX = database.get_setting("use_sandbox", "false").lower() == "true"  # تفعيل وضع الاختبار
+# قراءة نسبة عمولة البوت من قاعدة البيانات
+BOT_FEE_PERCENT = float(database.get_setting("bot_fee_percent", "10"))
 
-# إنشاء كائن منصة
-def get_exchange(name, api_key, api_secret, passphrase=None):
-    name = name.lower()
-    if name == "binance":
-        exchange = ccxt.binance({
+# إعداد اللوج
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# دالة تجهيز الاتصال بالمنصة
+def get_exchange(exchange_name, api_key, api_secret):
+    try:
+        exchange_class = getattr(ccxt, exchange_name)
+        exchange = exchange_class({
             'apiKey': api_key,
             'secret': api_secret
         })
-    elif name == "kucoin":
-        exchange = ccxt.kucoin({
-            'apiKey': api_key,
-            'secret': api_secret,
-            'password': passphrase
-        })
-    else:
-        raise ValueError(f"المنصة {name} غير مدعومة حالياً")
+        if SANDBOX_MODE and hasattr(exchange, 'set_sandbox_mode'):
+            exchange.set_sandbox_mode(True)
+        return exchange
+    except AttributeError:
+        raise ValueError(f"Exchange '{exchange_name}' not supported.")
 
-    if USE_SANDBOX and hasattr(exchange, 'set_sandbox_mode'):
-        exchange.set_sandbox_mode(True)
-
-    exchange.load_markets()
-    return exchange
-
-
-# دالة لضبط الكمية والسعر حسب دقة السوق
+# دالة لضبط الكمية حسب precision المنصة
 def adjust_amount(exchange, symbol, amount):
-    market = exchange.market(symbol)
+    markets = exchange.load_markets()
+    market = markets.get(symbol)
+    if not market:
+        raise ValueError(f"Market {symbol} not found on {exchange.id}")
     precision = market['precision']['amount']
-    return float(Decimal(amount).quantize(Decimal(str(10 ** -precision)), rounding=ROUND_DOWN))
+    return float(Decimal(amount).quantize(Decimal(10) ** -precision, rounding=ROUND_DOWN))
 
-
-def adjust_price(exchange, symbol, price):
-    market = exchange.market(symbol)
-    precision = market['precision']['price']
-    return float(Decimal(price).quantize(Decimal(str(10 ** -precision)), rounding=ROUND_DOWN))
-
-
-# تنفيذ أمر سوق (Market Order)
-def execute_market_order(exchange, symbol, side, amount):
+# دالة لتنفيذ أمر Market
+def place_market_order(exchange, symbol, side, amount):
     amount = adjust_amount(exchange, symbol, amount)
-    print(f"🚀 تنفيذ أمر سوق {side} على {symbol} بكمية {amount}")
+    logger.info(f"Placing {side} market order: {symbol}, amount={amount}")
+    if SANDBOX_MODE:
+        logger.info("[SANDBOX] Order not executed on real market.")
+        return {"sandbox": True, "symbol": symbol, "side": side, "amount": amount}
+    return exchange.create_market_order(symbol, side, amount)
+
+# حساب الربح بعد عمولة البوت
+def calculate_profit(total_profit):
+    fee = (BOT_FEE_PERCENT / 100) * total_profit
+    net_profit = total_profit - fee
+    return round(net_profit, 8), round(fee, 8)
+
+# التحقق من API Keys
+def validate_api_keys(exchange_name, api_key, api_secret):
     try:
-        order = exchange.create_market_order(symbol, side, amount)
-        return order
+        exchange = get_exchange(exchange_name, api_key, api_secret)
+        exchange.fetch_balance()
+        return True
     except Exception as e:
-        print(f"❌ خطأ أثناء تنفيذ الأمر: {e}")
-        return None
-
-
-# حساب الربح بعد خصم العمولة
-def calculate_profit(entry_price, exit_price, amount):
-    gross_profit = (exit_price - entry_price) * amount
-    net_profit = gross_profit - (gross_profit * BOT_FEE_PERCENT / 100)
-    return round(net_profit, 8)
-
-
-# وضع اختبار الصفقة
-def simulate_trade(entry_price, exit_price, amount):
-    profit = calculate_profit(entry_price, exit_price, amount)
-    return {
-        "entry_price": entry_price,
-        "exit_price": exit_price,
-        "amount": amount,
-        "profit": profit
-    }
+        logger.error(f"API Key validation failed for {exchange_name}: {str(e)}")
+        return False
