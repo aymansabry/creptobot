@@ -15,13 +15,18 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from binance.client import Client as BinanceClient
 from kucoin.client import Market, Trade
 
+import openai
+
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if not BOT_TOKEN or not DATABASE_URL:
-    raise Exception("❌ Missing environment variables BOT_TOKEN or DATABASE_URL")
+if not BOT_TOKEN or not DATABASE_URL or not OPENAI_API_KEY:
+    raise Exception("❌ Missing environment variables BOT_TOKEN, DATABASE_URL or OPENAI_API_KEY")
+
+openai.api_key = OPENAI_API_KEY
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -37,16 +42,13 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True, index=True)
-    # API keys per platform
     binance_api = Column(String(256), nullable=True)
     binance_secret = Column(String(256), nullable=True)
     kucoin_api = Column(String(256), nullable=True)
     kucoin_secret = Column(String(256), nullable=True)
     kucoin_passphrase = Column(String(256), nullable=True)
-    # Investment info
     investment_amount = Column(Float, default=0.0)
-    investment_status = Column(String(20), default="stopped")  # started / stopped
-    # Store which platforms are active
+    investment_status = Column(String(20), default="stopped")
     binance_active = Column(Boolean, default=False)
     kucoin_active = Column(Boolean, default=False)
 
@@ -62,7 +64,7 @@ class TradeLog(Base):
 
 Base.metadata.create_all(engine)
 
-# ----------------------- FSM States -----------------------
+# ----------------------- FSM STATES -----------------------
 
 class Form(StatesGroup):
     platform_choice = State()
@@ -99,13 +101,9 @@ async def verify_binance_keys(api_key, secret_key):
 async def verify_kucoin_keys(api_key, secret_key, passphrase):
     try:
         trade_client = Trade(api_key, secret_key, passphrase)
-        # استخدم get_accounts وليس get_account
         accounts = trade_client.get_accounts()
-        if accounts:
-            return True
-        return False
-    except Exception as e:
-        print(f"Error verifying KuCoin keys: {e}")
+        return bool(accounts)
+    except Exception:
         return False
 
 def user_platforms_keyboard(user: User):
@@ -126,6 +124,7 @@ def main_menu_keyboard():
         InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="menu_report"),
         InlineKeyboardButton("5️⃣ حالة السوق", callback_data="menu_market_status"),
         InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data="menu_stop_invest"),
+        InlineKeyboardButton("⚙️ اختبار مفاتيح KuCoin", callback_data="test_kucoin_prompt"),
     )
     return kb
 
@@ -148,7 +147,6 @@ async def back_to_main(call: types.CallbackQuery):
     await call.answer()
     await call.message.edit_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard())
 
-# 1- تسجيل/تعديل بيانات التداول
 @dp.callback_query_handler(lambda c: c.data == "menu_edit_trading_data")
 async def menu_edit_trading_data(call: types.CallbackQuery):
     db = SessionLocal()
@@ -199,7 +197,7 @@ async def secret_key_received(message: types.Message, state: FSMContext):
     if platform == "binance":
         valid = await verify_binance_keys(data["api_key"], secret_key)
         if not valid:
-            await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة. تأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
+            await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة.\nتأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
             await state.finish()
             return
         db = SessionLocal()
@@ -226,7 +224,7 @@ async def passphrase_received(message: types.Message, state: FSMContext):
 
     valid = await verify_kucoin_keys(data["api_key"], data["secret_key"], passphrase)
     if not valid:
-        await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة. تأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
+        await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة.\nتأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
         await state.finish()
         return
 
@@ -244,7 +242,6 @@ async def passphrase_received(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("العودة للقائمة الرئيسية:", reply_markup=main_menu_keyboard())
 
-# 2- بدء استثمار حقيقي
 @dp.callback_query_handler(lambda c: c.data == "menu_start_invest")
 async def start_invest_handler(call: types.CallbackQuery):
     db = SessionLocal()
@@ -267,13 +264,11 @@ async def start_invest_handler(call: types.CallbackQuery):
     await call.message.edit_text("🚀 تم بدء الاستثمار والمراجحة تلقائياً. يمكنك إيقافه من القائمة متى شئت.")
     asyncio.create_task(run_arbitrage_loop(call.from_user.id))
 
-# 3- استثمار وهمي
 @dp.callback_query_handler(lambda c: c.data == "menu_fake_invest")
 async def fake_invest_handler(call: types.CallbackQuery):
     await call.answer()
-    await call.message.edit_text("🛑 الاستثمار الوهمي غير مفعل حاليا. سيتم إضافته لاحقاً.")
+    await call.message.edit_text("🛑 الاستثمار الوهمي قيد التطوير حالياً.")
 
-# 4- كشف حساب عن فترة
 @dp.callback_query_handler(lambda c: c.data == "menu_report")
 async def report_start_handler(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
@@ -326,28 +321,64 @@ async def report_end_date_received(message: types.Message, state: FSMContext):
     except Exception:
         await message.answer("❌ تنسيق التاريخ غير صحيح. استخدم: YYYY-MM-DD")
 
-# 5- حالة السوق (تحليل مبسط - يمكن ربط OpenAI لاحقاً)
+# --------- حالة السوق مع OpenAI ---------
+
+async def get_market_analysis():
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful crypto market analyst."},
+                {"role": "user", "content": (
+                    "اعطني ملخص تحليل سوق العملات الرقمية الحالي، مع أسعار بعض العملات الرئيسية مثل BTC و ETH،"
+                    " ونبذة عن توقعات السوق بناء على مؤشرات تقنية مثل RSI و MACD."
+                    " اذكر التحذيرات إن وجدت."
+                )}
+            ],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"❌ خطأ في جلب تحليل السوق من OpenAI: {str(e)}"
+
 @dp.callback_query_handler(lambda c: c.data == "menu_market_status")
 async def market_status_handler(call: types.CallbackQuery):
     await call.answer()
-    text = "📈 حالة السوق الحالية:\n- السوق مستقر نسبياً.\n- نصيحتي: ابدأ استثمارك إذا كنت مستعداً للمخاطرة."
-    await call.message.edit_text(text, reply_markup=main_menu_keyboard())
+    analysis_text = await get_market_analysis()
+    await call.message.edit_text(analysis_text, reply_markup=main_menu_keyboard())
 
-# 6- إيقاف الاستثمار
-@dp.callback_query_handler(lambda c: c.data == "menu_stop_invest")
-async def stop_invest_handler(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    if not user:
-        await call.answer("❌ لم يتم ربط حسابك.")
-        db.close()
-        return
-    user.investment_status = "stopped"
-    db.add(user)
-    db.commit()
-    db.close()
+# --------- اختبار مفاتيح KuCoin ---------
+
+async def test_kucoin_api_keys(api_key, secret_key, passphrase):
+    try:
+        trade_client = Trade(api_key, secret_key, passphrase)
+        accounts = trade_client.get_accounts()
+        if accounts:
+            return "✅ مفاتيح KuCoin صالحة وتم التحقق منها."
+        else:
+            return "❌ المفتاح صالح لكن لا توجد حسابات مرتبطة."
+    except Exception as e:
+        return f"❌ خطأ في التحقق من مفاتيح KuCoin: {str(e)}"
+
+@dp.callback_query_handler(lambda c: c.data == "test_kucoin_prompt")
+async def test_kucoin_prompt_handler(call: types.CallbackQuery):
     await call.answer()
-    await call.message.edit_text("⏹️ تم إيقاف الاستثمار. لن يتم استخدام أموالك حتى تطلب البدء مجدداً.", reply_markup=main_menu_keyboard())
+    await call.message.edit_text(
+        "أرسل المفاتيح لاختبارها بهذه الصيغة:\n\n"
+        "/test_kucoin API_KEY SECRET_KEY PASSPHRASE\n\n"
+        "مثال:\n/test_kucoin abc123 def456 ghi789"
+    )
+
+@dp.message_handler(commands=["test_kucoin"])
+async def test_kucoin_handler(message: types.Message):
+    parts = message.text.split()
+    if len(parts) != 4:
+        await message.answer("❌ الصيغة: /test_kucoin <API_KEY> <SECRET_KEY> <PASSPHRASE>")
+        return
+    api_key, secret_key, passphrase = parts[1], parts[2], parts[3]
+    result = await test_kucoin_api_keys(api_key, secret_key, passphrase)
+    await message.answer(result)
 
 # ----------------------- ARBITRAGE LOOP -----------------------
 
@@ -408,26 +439,26 @@ async def run_arbitrage_loop(user_telegram_id):
                         trade_type = "Buy KuCoin / Sell Binance"
 
             if trade_type:
-                trade = TradeLog(
+                trade_log = TradeLog(
                     user_id=user.id,
                     trade_type=trade_type,
                     amount=amount_to_trade,
-                    price=min(binance_price, kucoin_price),
+                    price=min_price,
                     profit=profit,
                 )
-                db.add(trade)
-                db.commit()
-                await bot.send_message(user.telegram_id,
-                    f"✅ تمت عملية المراجحة:\n{trade_type}\nالكمية: {amount_to_trade:.6f} BTC\nالربح المتوقع: {profit:.2f} USDT")
+                db.add(trade_log)
+                await bot.send_message(user.telegram_id, f"✅ تمت صفقة {trade_type} وربح: {profit:.2f} USDT")
             else:
-                await bot.send_message(user.telegram_id, "⚠️ لا توجد فرص مراجحة حالياً.")
+                await bot.send_message(user.telegram_id, "لا توجد فرصة مراجحة حاليا.")
 
-            await asyncio.sleep(30)
+            db.commit()
+
         except Exception as e:
-            await bot.send_message(user.telegram_id, f"❌ خطأ أثناء المراجحة: {str(e)}")
-            await asyncio.sleep(60)
+            await bot.send_message(user.telegram_id, f"❌ خطأ في المراجحة: {str(e)}")
 
-# ----------------------- START BOT -----------------------
+        await asyncio.sleep(60)
+
+# ----------------------- RUN BOT -----------------------
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
