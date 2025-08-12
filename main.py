@@ -1,41 +1,54 @@
 import os
 import logging
-from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
-from database import init_db, SessionLocal, User
+import asyncio
+from telegram.ext import Application, CommandHandler
+from telegram.error import Conflict
+import requests
 
-load_dotenv()
+# الإعدادات
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN مش موجود في .env")
-
-# تشغيل اللوج
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# تهيئة قاعدة البيانات
-init_db()
 
+# ======= حذف أي Webhook موجود قبل البدء =======
+def delete_existing_webhook():
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        r = requests.post(url, timeout=10)
+        if r.status_code == 200:
+            logger.info("✅ Webhook deleted successfully.")
+        else:
+            logger.warning(f"⚠️ Failed to delete webhook: {r.text}")
+    except Exception as e:
+        logger.error(f"❌ Error deleting webhook: {e}")
+
+
+# ======= الأوامر =======
 async def start(update, context):
-    user_id = update.effective_user.id
-    username = update.effective_user.username
+    await update.message.reply_text("مرحبًا! البوت شغال تمام ✅")
 
-    db = SessionLocal()
-    if not db.query(User).filter_by(telegram_id=user_id).first():
-        new_user = User(telegram_id=user_id, username=username)
-        db.add(new_user)
-        db.commit()
-        logger.info(f"تم تسجيل مستخدم جديد: {username}")
-    db.close()
 
-    await update.message.reply_text("أهلاً! تم تسجيلك في النظام ✅")
+# ======= التشغيل =======
+async def main():
+    delete_existing_webhook()  # حذف الـ Webhook قبل التشغيل
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+
+    try:
+        logger.info("🚀 Bot is starting in polling mode...")
+        await app.run_polling()
+    except Conflict:
+        logger.error("❌ Conflict detected: Bot is already running elsewhere.")
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
+
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
-    logger.info("🚀 البوت شغال...")
-    app.run_polling()
+    asyncio.run(main())
