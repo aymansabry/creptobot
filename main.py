@@ -1,30 +1,24 @@
-# main.py
-import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from handlers import start, virtual_investment, set_amount, market_status
+import os
+from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# إعداد اللوج
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+# تحميل متغيرات البيئة من .env
+load_dotenv()
 
-# البوت الأساسي
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("❌ لم يتم العثور على TELEGRAM_BOT_TOKEN في ملف .env")
 
-app = ApplicationBuilder().token(TOKEN).build()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("مرحباً! اختر من القائمة:\n- استثمار وهمي\n- استثمار حقيقي")
 
-# أوامر
-app.add_handler(CommandHandler("start", start))
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
 
-# رسائل الاستثمار الوهمي
-app.add_handler(MessageHandler(filters.Regex("^💰 استثمار وهمي$"), virtual_investment))
-app.add_handler(MessageHandler(filters.Regex("^[0-9]+(\.[0-9]+)?$"), set_amount))
-
-# حالة السوق
-app.add_handler(MessageHandler(filters.Regex("^📊 حالة السوق$"), market_status))
-
-# تشغيل البوت
-if __name__ == "__main__":
     print("🚀 البوت شغال...")
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
