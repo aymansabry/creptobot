@@ -38,7 +38,6 @@ def create_tables():
     conn = get_connection()
     if conn:
         cursor = conn.cursor()
-        # users table مع عمود kucoin_password
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -54,7 +53,6 @@ def create_tables():
             is_investing BOOLEAN DEFAULT FALSE
         )
         """)
-        # owner wallet table
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS owner_wallet (
             id INT PRIMARY KEY CHECK (id = 1),
@@ -62,7 +60,6 @@ def create_tables():
             profit_percentage FLOAT DEFAULT 10
         )
         """)
-        # investment history
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS investment_history (
             id INT AUTO_INCREMENT PRIMARY KEY,
