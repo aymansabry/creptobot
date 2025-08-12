@@ -1,4 +1,3 @@
-# database.py
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
@@ -9,18 +8,11 @@ import datetime
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise Exception("DATABASE_URL is not set in .env")
-
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
+engine = None
+SessionLocal = None
 Base = declarative_base()
 
-# مثال على جداول المستخدم والمنصات والإعدادات
-
+# ===== تعريف الجداول =====
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -32,7 +24,7 @@ class User(Base):
 class ExchangeAPIKey(Base):
     __tablename__ = "exchange_api_keys"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)  # FK to User.id (can add FK constraint if want)
+    user_id = Column(Integer, index=True)  # FK to User.id
     exchange_name = Column(String(50))  # e.g. "binance", "kucoin"
     api_key = Column(String(255))
     api_secret = Column(String(255))
@@ -67,7 +59,16 @@ class Setting(Base):
     key = Column(String(50), unique=True)
     value = Column(String(255))
 
-def init_db():
+# ===== تهيئة قاعدة البيانات =====
+def init_db(database_url=None):
+    global engine, SessionLocal
+    if not database_url:
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise Exception("DATABASE_URL is not set in .env or passed to init_db()")
+
+    engine = create_engine(database_url, pool_pre_ping=True)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -77,8 +78,7 @@ def get_db():
     finally:
         db.close()
 
-# Utility functions examples:
-
+# ===== إعدادات =====
 def get_setting(db, key: str, default=None):
     try:
         setting = db.query(Setting).filter(Setting.key == key).first()
