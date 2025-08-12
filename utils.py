@@ -1,64 +1,92 @@
 # utils.py
+import os
 import ccxt
 import math
-from database import get_setting  # دالة لاستدعاء إعداد من جدول settings
+from decimal import Decimal, ROUND_DOWN
+from database import SessionLocal, get_setting
+from contextlib import contextmanager
 
-SANDBOX_MODE = True  # يمكن التحكم فيها ديناميكياً لو حبينا من قاعدة البيانات
-
-def validate_api_keys(platform, api_key, api_secret):
+# مدير جلسة قاعدة البيانات (للاستخدام السهل)
+@contextmanager
+def get_db_session():
+    db = SessionLocal()
     try:
-        exchange = get_exchange(platform, api_key, api_secret, test_connection=True)
-        # تحقق بسيط بجلب الرصيد أو الأسواق حسب المنصة
-        if platform in ['binance', 'kucoin']:
-            exchange.fetch_balance()
-        else:
-            return False
-        return True
-    except Exception:
-        return False
+        yield db
+    finally:
+        db.close()
 
-def get_exchange(platform, api_key=None, api_secret=None, test_connection=False):
-    exchange_class = getattr(ccxt, platform)
-    exchange = exchange_class({
+# جلب نسبة ربح البوت من قاعدة البيانات (كنسبة عشرية)
+def get_bot_fee_percent():
+    with get_db_session() as db:
+        fee_str = get_setting(db, "bot_fee_percent", "10")
+    try:
+        return float(fee_str)
+    except:
+        return 10.0  # القيمة الافتراضية
+
+# ضبط دقة الأسعار حسب منصة
+EXCHANGE_PRECISION = {
+    "binance": 8,
+    "kucoin": 8,
+    # أضف منصات أخرى هنا حسب الحاجة
+}
+
+def round_price(exchange_name: str, price: float) -> float:
+    precision = EXCHANGE_PRECISION.get(exchange_name.lower(), 8)
+    factor = 10 ** precision
+    return math.floor(price * factor) / factor
+
+# إنشاء عميل ccxt للمنصة بالـ API key و secret
+def create_exchange_client(exchange_name, api_key=None, api_secret=None, sandbox=False):
+    exchange_cls = getattr(ccxt, exchange_name.lower(), None)
+    if exchange_cls is None:
+        raise ValueError(f"Exchange {exchange_name} not supported.")
+
+    params = {}
+    if sandbox:
+        # مفعل وضع sandbox إذا توفر لدى المنصة (binance مثلا)
+        if exchange_name.lower() == "binance":
+            params['options'] = {'defaultType': 'future'}
+            params['urls'] = {'api': {'public': 'https://testnet.binance.vision/api',
+                                     'private': 'https://testnet.binance.vision/api'}}
+        elif exchange_name.lower() == "kucoin":
+            params['urls'] = {'api': 'https://openapi-sandbox.kucoin.com'}
+        # أضف أي منصات تدعم sandbox هنا
+
+    exchange = exchange_cls({
         'apiKey': api_key,
         'secret': api_secret,
+        **params,
         'enableRateLimit': True,
     })
 
-    if SANDBOX_MODE:
-        if platform == 'binance':
-            exchange.set_sandbox_mode(True)
-        elif platform == 'kucoin':
-            exchange.urls['api'] = exchange.urls['test']
-            exchange.headers = {'x-sandbox': 'true'}
-
-    if test_connection:
-        exchange.load_markets()
-
     return exchange
 
-def place_market_order(exchange, symbol, side, amount):
-    markets = exchange.load_markets()
-    market = markets[symbol]
-    precision = market['precision']['amount']
-
-    amount_rounded = round_down(amount, precision)
-    order = exchange.create_order(symbol, 'market', side, amount_rounded)
-    return order
-
-def round_down(number, decimals=0):
-    if decimals < 0:
-        raise ValueError("decimals must be >= 0")
-    factor = 10 ** decimals
-    return math.floor(number * factor) / factor
-
-def calculate_profit(gross_profit):
+# جلب سعر السوق الحالي لعملة معينة
+def fetch_current_price(exchange_name, symbol):
     try:
-        fee_percent_str = get_setting("bot_fee_percent", "10")  # افتراض 10%
-        fee_percent = float(fee_percent_str) / 100
-    except Exception:
-        fee_percent = 0.10  # قيمة افتراضية
+        exchange = create_exchange_client(exchange_name)
+        ticker = exchange.fetch_ticker(symbol)
+        return ticker['last']
+    except Exception as e:
+        print(f"Error fetching price from {exchange_name} for {symbol}: {e}")
+        return None
 
-    fee = gross_profit * fee_percent
-    net_profit = gross_profit - fee
-    return round(net_profit, 8), round(fee, 8)
+# حساب الربح بعد خصم نسبة البوت
+def calculate_profit(gross_profit: float) -> float:
+    fee_percent = get_bot_fee_percent()
+    net_profit = gross_profit * (1 - fee_percent / 100)
+    return net_profit
+
+# تنفيذ صفقة سوق (شراء/بيع) مع rounding للسعر
+def execute_market_order(exchange_name, api_key, api_secret, symbol, side, amount, sandbox=False):
+    exchange = create_exchange_client(exchange_name, api_key, api_secret, sandbox)
+    try:
+        # هنا فقط مثال لطلب سعر السوق وتنفيذ السوق مباشرة
+        # لاحظ: بعض المنصات لا تدعم السوق مباشرة ويحتاجون أوامر ليمت أو طريقة أخرى
+        # إذا المنصة تدعم السوق مباشرة:
+        order = exchange.create_order(symbol, 'market', side, amount)
+        return order
+    except Exception as e:
+        print(f"Order execution error on {exchange_name}: {e}")
+        return None
