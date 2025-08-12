@@ -1,13 +1,10 @@
-# main.py
 import logging
 import os
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, ContextTypes, CommandHandler,
-    CallbackQueryHandler, MessageHandler, filters
-)
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import ccxt
-from database import get_connection, create_tables
+from database import create_tables, get_user, save_user_data, get_settings, update_settings
 from dotenv import load_dotenv
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -21,395 +18,275 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# States for tracking user input
+executor = ThreadPoolExecutor(max_workers=5)
+
+# States
 STATE_NONE = 0
-STATE_ADD_PLATFORM_NAME = 10
-STATE_ADD_PLATFORM_API = 11
-STATE_ADD_PLATFORM_SECRET = 12
-STATE_ADD_PLATFORM_PASSWORD = 13
-STATE_SET_INVEST_AMOUNT = 20
+STATE_ENTER_BINANCE_API = 1
+STATE_ENTER_BINANCE_SECRET = 2
+STATE_ENTER_KUCOIN_API = 3
+STATE_ENTER_KUCOIN_SECRET = 4
+STATE_ENTER_KUCOIN_PASSWORD = 5
+STATE_ENTER_WALLET = 6
+STATE_ENTER_INVEST_AMOUNT = 7
+STATE_OWNER_SET_PROFIT = 8
 
 user_states = {}
-temp_platform_data = {}
-
-executor = ThreadPoolExecutor(max_workers=5)
+temp_data = {}
 
 async def run_in_executor(func, *args):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, lambda: func(*args))
 
-
+# --- بوت الأوامر والقوائم ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    await show_main_menu(update, user_id)
+    user = get_user(user_id)
+    profit_percent = get_settings()['profit_percent']
 
-
-async def show_main_menu(update, user_id):
     keyboard = [
-        [InlineKeyboardButton("إدارة منصات التداول", callback_data='manage_platforms')],
-        [InlineKeyboardButton("تعيين مبلغ الاستثمار", callback_data='set_amount')],
-        [InlineKeyboardButton("عرض الأرباح", callback_data='show_profit')],
+        [InlineKeyboardButton("1️⃣ تسجيل أو تعديل بيانات التداول والمحفظة", callback_data='trade_data')],
+        [InlineKeyboardButton("2️⃣ تعيين مبلغ الاستثمار", callback_data='set_amount')],
+        [InlineKeyboardButton("3️⃣ بدء استثمار حقيقي", callback_data='start_invest')],
+        [InlineKeyboardButton("4️⃣ بدء استثمار وهمي", callback_data='start_demo')],
+        [InlineKeyboardButton("5️⃣ كشف حساب عن فترة", callback_data='account_statement')],
+        [InlineKeyboardButton("6️⃣ حالة السوق", callback_data='market_status')],
+        [InlineKeyboardButton("7️⃣ إيقاف الاستثمار", callback_data='stop_invest')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.message:
-        await update.message.reply_text("مرحبًا بك! اختر من القائمة:", reply_markup=reply_markup)
-    elif update.callback_query:
-        await update.callback_query.message.edit_text("مرحبًا بك! اختر من القائمة:", reply_markup=reply_markup)
 
+    wallet_msg = user['wallet_address'] if user and user.get('wallet_address') else "لم يتم تعيين محفظة"
+    invest_amount = user['invested_amount'] if user else 0
+    await update.message.reply_text(
+        f"مرحبًا! نسبة ربح البوت الحالية: {profit_percent}%\n"
+        f"محفظتك الحالية: {wallet_msg}\n"
+        f"مبلغ الاستثمار الحالي: {invest_amount} دولار\n\n"
+        "اختر من القائمة:",
+        reply_markup=reply_markup
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    data = query.data
     await query.answer()
+    data = query.data
 
-    if data == 'manage_platforms':
-        await show_platforms_menu(update, user_id)
+    if data == 'trade_data':
+        await show_trade_data_menu(update, user_id)
     elif data == 'set_amount':
-        user_states[user_id] = STATE_SET_INVEST_AMOUNT
-        await query.message.reply_text("الرجاء إدخال المبلغ المستثمر (رقم فقط):")
-    elif data == 'show_profit':
-        profit = get_user_profit(user_id)
-        await query.message.reply_text(f"الأرباح الحالية: {profit} دولار (تقريبي)")
-    elif data == 'add_platform':
-        user_states[user_id] = STATE_ADD_PLATFORM_NAME
-        await query.message.reply_text("الرجاء إدخال اسم المنصة (Binance أو KuCoin):")
+        user_states[user_id] = STATE_ENTER_INVEST_AMOUNT
+        await query.message.reply_text("الرجاء إدخال مبلغ الاستثمار (رقم فقط):")
+    elif data == 'start_invest':
+        await query.message.reply_text("بدء الاستثمار الحقيقي... (تحت التطوير)")
+    elif data == 'start_demo':
+        await query.message.reply_text("بدء استثمار وهمي... (تحت التطوير)")
+    elif data == 'account_statement':
+        await query.message.reply_text("أدخل تاريخ البداية (yyyy-mm-dd):")
+        user_states[user_id] = STATE_NONE  # لتبسيط المثال
+    elif data == 'market_status':
+        await query.message.reply_text("تحليل السوق... (تحت التطوير)")
+    elif data == 'stop_invest':
+        # غيّر حالة الاستثمار للمستخدم
+        save_user_data(user_id, is_active=False)
+        await query.message.reply_text("تم إيقاف استثمارك.")
     elif data.startswith('edit_platform_'):
-        # مثال: edit_platform_3
-        platform_id = int(data.split('_')[-1])
-        await show_platform_edit_menu(update, platform_id)
-    elif data.startswith('edit_api_'):
-        platform_id = int(data.split('_')[-1])
-        user_states[user_id] = ('edit_api', platform_id)
-        await query.message.reply_text("الرجاء إدخال API Key الجديد:")
-    elif data.startswith('edit_secret_'):
-        platform_id = int(data.split('_')[-1])
-        user_states[user_id] = ('edit_secret', platform_id)
-        await query.message.reply_text("الرجاء إدخال Secret Key الجديد:")
-    elif data.startswith('edit_password_'):
-        platform_id = int(data.split('_')[-1])
-        user_states[user_id] = ('edit_password', platform_id)
-        await query.message.reply_text("الرجاء إدخال Password الجديد:")
-    elif data.startswith('toggle_active_'):
-        platform_id = int(data.split('_')[-1])
-        toggle_platform_active(platform_id)
-        await show_platforms_menu(update, user_id)
-    elif data.startswith('validate_platform_'):
-        platform_id = int(data.split('_')[-1])
-        valid = await validate_platform(platform_id)
-        if valid:
-            await query.message.reply_text("✅ تم التحقق من مفاتيح API بنجاح!")
-        else:
-            await query.message.reply_text("❌ فشل التحقق من مفاتيح API. يرجى مراجعتها.")
-        await show_platforms_menu(update, user_id)
-    elif data == 'main_menu':
-        await show_main_menu(update, user_id)
+        platform = data.split('_')[-1]
+        await edit_platform_keys(update, user_id, platform)
+    elif data == 'set_wallet':
+        user_states[user_id] = STATE_ENTER_WALLET
+        await query.message.reply_text("الرجاء إدخال عنوان المحفظة الخاصة بك:")
+    elif data == 'owner_settings':
+        if user_id != OWNER_TELEGRAM_ID:
+            await query.message.reply_text("غير مصرح لك بالوصول لهذه القائمة.")
+            return
+        await show_owner_settings(update)
+    elif data == 'set_profit_percent':
+        user_states[user_id] = STATE_OWNER_SET_PROFIT
+        await query.message.reply_text("ادخل نسبة ربح البوت الجديدة (مثلا 5):")
 
+async def show_trade_data_menu(update, user_id):
+    user = get_user(user_id)
+    active_platforms = []
+    if user and user.get('active_platforms'):
+        try:
+            active_platforms = json.loads(user['active_platforms'])
+        except:
+            active_platforms = []
 
-async def show_platforms_menu(update, user_id):
-    platforms = get_user_platforms(user_id)
-    keyboard = []
-    for p in platforms:
-        status = "✅" if p['active'] else "❌"
-        line = f"{status} {p['platform_name']} (ID: {p['id']})"
-        buttons = [
-            InlineKeyboardButton("تعديل", callback_data=f"edit_platform_{p['id']}"),
-            InlineKeyboardButton("تفعيل/إيقاف", callback_data=f"toggle_active_{p['id']}"),
-            InlineKeyboardButton("تحقق", callback_data=f"validate_platform_{p['id']}"),
-        ]
-        keyboard.append(buttons)
+    buttons = []
+    for platform in ['binance', 'kucoin']:
+        status = '✅ مفعل' if platform in active_platforms else '❌ غير مفعل'
+        buttons.append([InlineKeyboardButton(f"{platform.capitalize()} [{status}]", callback_data=f'edit_platform_{platform}')])
 
-    keyboard.append([InlineKeyboardButton("➕ إضافة منصة جديدة", callback_data='add_platform')])
-    keyboard.append([InlineKeyboardButton("⬅ القائمة الرئيسية", callback_data='main_menu')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    buttons.append([InlineKeyboardButton("➕ إضافة منصة جديدة", callback_data='add_platform')])
+    buttons.append([InlineKeyboardButton("⬅️ العودة للقائمة الرئيسية", callback_data='start')])
 
-    if update.callback_query:
-        await update.callback_query.message.edit_text("قائمة منصاتك:", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text("قائمة منصاتك:", reply_markup=reply_markup)
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await update.callback_query.message.reply_text("منصات التداول الخاصة بك:", reply_markup=reply_markup)
 
-
-async def show_platform_edit_menu(update, platform_id):
-    platform = get_platform_by_id(platform_id)
-    if not platform:
-        await update.callback_query.message.reply_text("المنصة غير موجودة.")
-        return
-
-    keyboard = [
-        InlineKeyboardButton("تعديل API Key", callback_data=f"edit_api_{platform_id}"),
-        InlineKeyboardButton("تعديل Secret Key", callback_data=f"edit_secret_{platform_id}"),
-    ]
-    if platform['platform_name'].lower() == 'kucoin':
-        keyboard.append(InlineKeyboardButton("تعديل Password", callback_data=f"edit_password_{platform_id}"))
-
-    keyboard.append(InlineKeyboardButton("⬅ رجوع", callback_data='manage_platforms'))
-    reply_markup = InlineKeyboardMarkup([[btn] for btn in keyboard])
-
-    await update.callback_query.message.edit_text(f"تحرير منصة {platform['platform_name']}:", reply_markup=reply_markup)
-
+async def edit_platform_keys(update, user_id, platform):
+    user_states[user_id] = STATE_ENTER_BINANCE_API if platform == 'binance' else STATE_ENTER_KUCOIN_API
+    temp_data[user_id] = {'platform': platform}
+    await update.callback_query.message.reply_text(f"أدخل API Key لمنصة {platform.capitalize()}:")
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
     state = user_states.get(user_id, STATE_NONE)
+    temp = temp_data.get(user_id, {})
 
-    # حالات التعديل المفتاحية
-    if isinstance(state, tuple):
-        action, platform_id = state
-        if action == 'edit_api':
-            update_platform(platform_id, api_key=text)
-            user_states[user_id] = STATE_NONE
-            await update.message.reply_text("تم تحديث API Key.")
-            await show_platforms_menu(update, user_id)
-            return
-        elif action == 'edit_secret':
-            update_platform(platform_id, secret_key=text)
-            user_states[user_id] = STATE_NONE
-            await update.message.reply_text("تم تحديث Secret Key.")
-            await show_platforms_menu(update, user_id)
-            return
-        elif action == 'edit_password':
-            update_platform(platform_id, password=text)
-            user_states[user_id] = STATE_NONE
-            await update.message.reply_text("تم تحديث Password.")
-            await show_platforms_menu(update, user_id)
-            return
-
-    if state == STATE_ADD_PLATFORM_NAME:
-        platform_name = text.strip()
-        if platform_name.lower() not in ['binance', 'kucoin']:
-            await update.message.reply_text("الرجاء إدخال اسم منصة مدعومة (Binance أو KuCoin).")
-            return
-        add_platform(user_id, platform_name)
-        user_states[user_id] = STATE_ADD_PLATFORM_API
-        temp_platform_data[user_id] = {'platform_name': platform_name}
-        await update.message.reply_text(f"تم إضافة منصة {platform_name}.\nالرجاء إدخال API Key:")
-        return
-
-    if state == STATE_ADD_PLATFORM_API:
-        temp_platform_data[user_id]['api_key'] = text
-        user_states[user_id] = STATE_ADD_PLATFORM_SECRET
-        await update.message.reply_text("الرجاء إدخال Secret Key:")
-        return
-
-    if state == STATE_ADD_PLATFORM_SECRET:
-        temp_platform_data[user_id]['secret_key'] = text
-        if temp_platform_data[user_id]['platform_name'].lower() == 'kucoin':
-            user_states[user_id] = STATE_ADD_PLATFORM_PASSWORD
-            await update.message.reply_text("الرجاء إدخال Password (Passphrase) الخاص بـ KuCoin:")
-        else:
-            platform_name = temp_platform_data[user_id]['platform_name']
-            api_key = temp_platform_data[user_id]['api_key']
-            secret_key = temp_platform_data[user_id]['secret_key']
-            platform_id = get_last_platform_id_for_user(user_id)
-            update_platform(platform_id, api_key=api_key, secret_key=secret_key)
-            user_states[user_id] = STATE_NONE
-            temp_platform_data.pop(user_id, None)
-            await update.message.reply_text("تم حفظ بيانات المنصة.")
-        return
-
-    if state == STATE_ADD_PLATFORM_PASSWORD:
-        password = text
-        platform_name = temp_platform_data[user_id]['platform_name']
-        api_key = temp_platform_data[user_id]['api_key']
-        secret_key = temp_platform_data[user_id]['secret_key']
-        platform_id = get_last_platform_id_for_user(user_id)
-        update_platform(platform_id, api_key=api_key, secret_key=secret_key, password=password)
-        user_states[user_id] = STATE_NONE
-        temp_platform_data.pop(user_id, None)
-        await update.message.reply_text("تم حفظ بيانات منصة KuCoin بالكامل.")
-        return
-
-    if state == STATE_SET_INVEST_AMOUNT:
+    if state == STATE_ENTER_INVEST_AMOUNT:
         if text.replace('.', '', 1).isdigit():
             amount = float(text)
-            set_user_invest_amount(user_id, amount)
+            save_user_data(user_id, invested_amount=amount)
             user_states[user_id] = STATE_NONE
-            await update.message.reply_text(f"تم تعيين المبلغ المستثمر: {amount} دولار")
+            await update.message.reply_text(f"تم تعيين مبلغ الاستثمار: {amount} دولار")
         else:
             await update.message.reply_text("الرجاء إدخال رقم صالح.")
-        return
 
-    # افتراضي
-    await update.message.reply_text("يرجى استخدام القوائم للبدء. أرسل /start للعودة إلى القائمة الرئيسية.")
+    elif state == STATE_ENTER_BINANCE_API:
+        temp['api_key'] = text
+        user_states[user_id] = STATE_ENTER_BINANCE_SECRET
+        temp_data[user_id] = temp
+        await update.message.reply_text("أدخل Binance Secret Key:")
 
+    elif state == STATE_ENTER_BINANCE_SECRET:
+        temp['secret_key'] = text
+        # احفظ مفاتيح Binance
+        user = get_user(user_id)
+        active_platforms = []
+        if user and user.get('active_platforms'):
+            try:
+                active_platforms = json.loads(user['active_platforms'])
+            except:
+                active_platforms = []
 
-# DB Functions
+        if 'binance' not in active_platforms:
+            active_platforms.append('binance')
 
-def create_tables_full():
-    create_tables()
-    conn = get_connection()
-    if conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS platforms (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                telegram_id BIGINT,
-                platform_name VARCHAR(50),
-                api_key VARCHAR(255),
-                secret_key VARCHAR(255),
-                password VARCHAR(255),
-                active BOOLEAN DEFAULT TRUE,
-                UNIQUE(telegram_id, platform_name)
-            )
-        """)
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-
-def get_user_platforms(user_id):
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM platforms WHERE telegram_id=%s", (user_id,))
-    platforms = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return platforms
-
-
-def get_platform_by_id(platform_id):
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM platforms WHERE id=%s", (platform_id,))
-    platform = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return platform
-
-
-def add_platform(user_id, platform_name):
-    conn = get_connection()
-    cursor = conn.cursor()
-    # أدخل السجل فقط مع telegram_id و platform_name
-    try:
-        cursor.execute(
-            "INSERT INTO platforms (telegram_id, platform_name) VALUES (%s, %s)",
-            (user_id, platform_name)
+        save_user_data(
+            user_id,
+            binance_api_key=temp['api_key'],
+            binance_secret_key=temp['secret_key'],
+            active_platforms=json.dumps(active_platforms)
         )
-        conn.commit()
-    except Exception as e:
-        print(f"Error adding platform: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-
-
-def get_last_platform_id_for_user(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id FROM platforms WHERE telegram_id=%s ORDER BY id DESC LIMIT 1", (user_id,)
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row[0] if row else None
-
-
-def update_platform(platform_id, api_key=None, secret_key=None, password=None, active=None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "UPDATE platforms SET "
-    params = []
-    sets = []
-    if api_key is not None:
-        sets.append("api_key=%s")
-        params.append(api_key)
-    if secret_key is not None:
-        sets.append("secret_key=%s")
-        params.append(secret_key)
-    if password is not None:
-        sets.append("password=%s")
-        params.append(password)
-    if active is not None:
-        sets.append("active=%s")
-        params.append(active)
-    query += ", ".join(sets)
-    query += " WHERE id=%s"
-    params.append(platform_id)
-    cursor.execute(query, tuple(params))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-def toggle_platform_active(platform_id):
-    platform = get_platform_by_id(platform_id)
-    if platform:
-        new_status = not platform['active']
-        update_platform(platform_id, active=new_status)
-
-
-def set_user_invest_amount(user_id, amount):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET invested_amount=%s WHERE telegram_id=%s",
-        (amount, user_id)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-def get_user_profit(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT profit FROM users WHERE telegram_id=%s",
-        (user_id,)
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row[0] if row else 0
-
-
-async def validate_platform(platform_id):
-    platform = get_platform_by_id(platform_id)
-    if not platform:
-        return False
-    platform_name = platform['platform_name'].lower()
-    api_key = platform['api_key']
-    secret_key = platform['secret_key']
-    password = platform['password']
-
-    try:
-        if platform_name == 'binance':
-            exchange = ccxt.binance({
-                'apiKey': api_key,
-                'secret': secret_key,
-                'enableRateLimit': True,
-            })
-        elif platform_name == 'kucoin':
-            exchange = ccxt.kucoin({
-                'apiKey': api_key,
-                'secret': secret_key,
-                'password': password,
-                'enableRateLimit': True,
-            })
+        user_states[user_id] = STATE_NONE
+        temp_data.pop(user_id, None)
+        await update.message.reply_text("تم حفظ مفاتيح Binance. جارٍ التحقق...")
+        valid = await validate_binance_keys(temp['api_key'], temp['secret_key'])
+        if valid:
+            await update.message.reply_text("✅ مفاتيح Binance صالحة وتم التفعيل!")
         else:
-            return False
+            await update.message.reply_text("❌ مفاتيح Binance غير صالحة، يرجى إعادة المحاولة.")
 
-        balance = await run_in_executor(exchange.fetch_balance)
+    elif state == STATE_ENTER_KUCOIN_API:
+        temp['api_key'] = text
+        user_states[user_id] = STATE_ENTER_KUCOIN_SECRET
+        temp_data[user_id] = temp
+        await update.message.reply_text("أدخل KuCoin Secret Key:")
+
+    elif state == STATE_ENTER_KUCOIN_SECRET:
+        temp['secret_key'] = text
+        user_states[user_id] = STATE_ENTER_KUCOIN_PASSWORD
+        temp_data[user_id] = temp
+        await update.message.reply_text("أدخل KuCoin API Password (Passphrase):")
+
+    elif state == STATE_ENTER_KUCOIN_PASSWORD:
+        temp['password'] = text
+        # احفظ مفاتيح KuCoin
+        user = get_user(user_id)
+        active_platforms = []
+        if user and user.get('active_platforms'):
+            try:
+                active_platforms = json.loads(user['active_platforms'])
+            except:
+                active_platforms = []
+
+        if 'kucoin' not in active_platforms:
+            active_platforms.append('kucoin')
+
+        save_user_data(
+            user_id,
+            kucoin_api_key=temp['api_key'],
+            kucoin_secret_key=temp['secret_key'],
+            kucoin_password=temp['password'],
+            active_platforms=json.dumps(active_platforms)
+        )
+        user_states[user_id] = STATE_NONE
+        temp_data.pop(user_id, None)
+        await update.message.reply_text("تم حفظ مفاتيح KuCoin. جارٍ التحقق...")
+        valid = await validate_kucoin_keys(temp['api_key'], temp['secret_key'], temp['password'])
+        if valid:
+            await update.message.reply_text("✅ مفاتيح KuCoin صالحة وتم التفعيل!")
+        else:
+            await update.message.reply_text("❌ مفاتيح KuCoin غير صالحة، يرجى إعادة المحاولة.")
+
+    elif state == STATE_ENTER_WALLET:
+        # حفظ عنوان المحفظة
+        save_user_data(user_id, wallet_address=text)
+        user_states[user_id] = STATE_NONE
+        await update.message.reply_text(f"تم حفظ محفظتك: {text}")
+
+    elif state == STATE_OWNER_SET_PROFIT:
+        if not update.message.from_user.id == OWNER_TELEGRAM_ID:
+            await update.message.reply_text("غير مصرح لك.")
+            user_states[user_id] = STATE_NONE
+            return
+
+        try:
+            val = float(text)
+            if val < 0 or val > 100:
+                raise ValueError
+            update_settings(profit_percent=val)
+            user_states[user_id] = STATE_NONE
+            await update.message.reply_text(f"تم تحديث نسبة ربح البوت إلى {val}%")
+        except:
+            await update.message.reply_text("الرجاء إدخال رقم صالح بين 0 و 100.")
+
+    else:
+        await update.message.reply_text("يرجى استخدام القوائم فقط. ارسل /start للعودة للقائمة الرئيسية.")
+
+# --- تحقق المفاتيح ---
+async def validate_binance_keys(api_key, secret_key):
+    try:
+        binance = ccxt.binance({
+            "apiKey": api_key,
+            "secret": secret_key,
+            "enableRateLimit": True,
+        })
+        balance = await run_in_executor(binance.fetch_balance)
         return True
     except Exception as e:
-        print(f"Error validating {platform_name} keys: {e}")
+        logger.error(f"Binance API validation failed: {e}")
         return False
 
+async def validate_kucoin_keys(api_key, secret_key, password):
+    try:
+        kucoin = ccxt.kucoin({
+            "apiKey": api_key,
+            "secret": secret_key,
+            "password": password,
+            "enableRateLimit": True,
+        })
+        balance = await run_in_executor(kucoin.fetch_balance)
+        return True
+    except Exception as e:
+        logger.error(f"KuCoin API validation failed: {e}")
+        return False
 
+# --- نقطة الدخول ---
 def main():
-    create_tables_full()
-    app = ApplicationBuilder().token(TOKEN).build()
+    create_tables()
+    global OWNER_TELEGRAM_ID
+    OWNER_TELEGRAM_ID = int(os.getenv('OWNER_TELEGRAM_ID') or 123456789)  # عدل هنا برقمك
 
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
 
     print("Bot is running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
