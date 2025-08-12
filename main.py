@@ -1,59 +1,68 @@
 #main.py
-import os
 import logging
+import os
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from database import init_db, SessionLocal
-from dotenv import load_dotenv
+from models import User
 
-# تحميل المتغيرات من .env
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# إعداد اللوجات
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN not found in environment variables.")
+
 # تهيئة قاعدة البيانات
-init_db(DATABASE_URL)
+init_db()
 
-# دوال أوامر البوت
+# قائمة الأزرار
+main_menu = [
+    ["📈 عرض السوق", "💼 محفظتي"],
+    ["⚙️ الإعدادات", "ℹ️ مساعدة"]
+]
+
+# تسجيل المستخدم
+def register_user(telegram_id, username, first_name):
+    db = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == telegram_id).first()
+    if not user:
+        user = User(telegram_id=telegram_id, username=username, first_name=first_name)
+        db.add(user)
+        db.commit()
+        logger.info(f"✅ User registered: {telegram_id}")
+    db.close()
+
+# أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        ["📊 تحليل السوق", "💰 بدء استثمار"],
-        ["⚙️ الإعدادات", "ℹ️ المساعدة"]
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("مرحباً بك في البوت! اختر من القائمة:", reply_markup=reply_markup)
+    user_data = update.effective_user
+    register_user(user_data.id, user_data.username, user_data.first_name)
+    await update.message.reply_text(
+        f"أهلاً {user_data.first_name}! 👋\nاختر من القائمة:",
+        reply_markup=ReplyKeyboardMarkup(main_menu, resize_keyboard=True)
+    )
 
-async def market_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 جاري تحليل السوق...")
+# التعامل مع الأزرار
+async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == "📈 عرض السوق":
+        await update.message.reply_text("📊 جاري جلب بيانات السوق...")
+        # استدعاء كود التحليل هنا
+    elif text == "💼 محفظتي":
+        await update.message.reply_text("📂 محفظتك فارغة حالياً.")
+    elif text == "⚙️ الإعدادات":
+        await update.message.reply_text("⚙️ الإعدادات قيد التطوير.")
+    elif text == "ℹ️ مساعدة":
+        await update.message.reply_text("ℹ️ بوت استثمار العملات الرقمية.")
+    else:
+        await update.message.reply_text("❓ لم أفهم الأمر.")
 
-async def start_investment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ تم بدء الاستثمار!")
-
-async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚙️ هنا الإعدادات.")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ℹ️ هذه هي قائمة المساعدة.")
-
-# إنشاء التطبيق
 def main():
-    application = Application.builder().token(TOKEN).build()
-
-    # أوامر
-    application.add_handler(CommandHandler("start", start))
-
-    # رسائل نصية
-    application.add_handler(MessageHandler(filters.Text("📊 تحليل السوق"), market_analysis))
-    application.add_handler(MessageHandler(filters.Text("💰 بدء استثمار"), start_investment))
-    application.add_handler(MessageHandler(filters.Text("⚙️ الإعدادات"), settings))
-    application.add_handler(MessageHandler(filters.Text("ℹ️ المساعدة"), help_command))
-
-    logger.info("🚀 البوت بدأ ويعمل في وضع polling...")
-    application.run_polling()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_handler))
+    logger.info("🚀 البوت يعمل الآن...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
