@@ -1,3 +1,4 @@
+# database.py
 import os
 import mysql.connector
 from mysql.connector import errorcode
@@ -7,6 +8,7 @@ from urllib.parse import urlparse
 load_dotenv()
 
 DATABASE_URL = os.getenv('DATABASE_URL')
+
 
 def parse_database_url(url):
     result = urlparse(url)
@@ -19,7 +21,9 @@ def parse_database_url(url):
         'auth_plugin': 'mysql_native_password'
     }
 
+
 db_config = parse_database_url(DATABASE_URL)
+
 
 def get_connection():
     try:
@@ -33,6 +37,7 @@ def get_connection():
         else:
             print(err)
         return None
+
 
 def create_tables():
     conn = get_connection()
@@ -54,25 +59,14 @@ def create_tables():
                 api_key VARCHAR(255),
                 secret_key VARCHAR(255),
                 password VARCHAR(255),
-                active TINYINT DEFAULT 1,
-                valid TINYINT DEFAULT 0,
-                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS investments (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                telegram_id BIGINT,
-                platform_id INT,
-                status VARCHAR(50),
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id),
-                FOREIGN KEY (platform_id) REFERENCES platforms(id)
+                active BOOLEAN DEFAULT TRUE,
+                UNIQUE(telegram_id, platform_name)
             )
         """)
         conn.commit()
         cursor.close()
         conn.close()
+
 
 if __name__ == "__main__":
     create_tables()
