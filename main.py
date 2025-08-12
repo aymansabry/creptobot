@@ -1,31 +1,35 @@
 import asyncio
+import logging
+from datetime import datetime
+
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-from openai import OpenAI
-import logging
 
-# إعدادات
+import openai
+
+# ------------ الإعدادات -------------
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 DATABASE_URL = "mysql+pymysql://user:password@host/dbname"
 OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
 
 logging.basicConfig(level=logging.INFO)
 
+# -------------- بوت وتخزين الحالة -------------
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
+# -------------- قاعدة البيانات -------------
 Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
-# موديل المستخدم
 class User(Base):
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True)
@@ -38,11 +42,22 @@ class User(Base):
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")  # started, stopped, waiting_approval
 
+class TradeLog(Base):
+    __tablename__ = 'trade_logs'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    trade_type = Column(String(20))  # arbitrage, buy, sell, etc.
+    amount = Column(Float)
+    price = Column(Float)
+    profit = Column(Float)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
 Base.metadata.create_all(engine)
 
-openai = OpenAI(api_key=OPENAI_API_KEY)
+# -------------- إعداد OpenAI -------------
+openai.api_key = OPENAI_API_KEY
 
-# FSM للحالات المختلفة
+# -------------- حالات FSM -------------
 class Form(StatesGroup):
     waiting_binance_api = State()
     waiting_binance_secret = State()
@@ -52,13 +67,12 @@ class Form(StatesGroup):
     waiting_investment_amount = State()
     waiting_approval = State()
 
-# --- أوامر البداية ---
+# -------------- أوامر بوت -------------
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     await message.answer(
         "مرحباً بك في بوت الاستثمار الآلي!\n"
-        "يمكنك ربط حساباتك وتحديد مبلغ الاستثمار.\n\n"
-        "الأوامر المتاحة:\n"
+        "استخدم الأوامر التالية:\n"
         "/link_binance - ربط حساب Binance\n"
         "/link_kucoin - ربط حساب KuCoin\n"
         "/set_investment - تحديد مبلغ الاستثمار\n"
@@ -66,7 +80,7 @@ async def cmd_start(message: types.Message):
         "/stop_invest - إيقاف الاستثمار"
     )
 
-# --- ربط حساب Binance ---
+# ---- ربط Binance ----
 @dp.message_handler(commands=['link_binance'])
 async def link_binance_start(message: types.Message):
     await message.answer("أرسل مفتاح API الخاص بـ Binance:")
@@ -75,7 +89,6 @@ async def link_binance_start(message: types.Message):
 @dp.message_handler(state=Form.waiting_binance_api)
 async def process_binance_api(message: types.Message, state: FSMContext):
     api_key = message.text.strip()
-    # تحقق مبدئي (مثلاً الطول)
     if len(api_key) < 20:
         await message.reply("المفتاح غير صالح، حاول مرة أخرى.")
         return
@@ -102,7 +115,7 @@ async def process_binance_secret(message: types.Message, state: FSMContext):
     await message.answer("تم ربط حساب Binance بنجاح ✅")
     await state.finish()
 
-# --- ربط حساب KuCoin ---
+# ---- ربط KuCoin ----
 @dp.message_handler(commands=['link_kucoin'])
 async def link_kucoin_start(message: types.Message):
     await message.answer("أرسل مفتاح API الخاص بـ KuCoin:")
@@ -145,7 +158,7 @@ async def process_kucoin_passphrase(message: types.Message, state: FSMContext):
     await message.answer("تم ربط حساب KuCoin بنجاح ✅")
     await state.finish()
 
-# --- تحديد مبلغ الاستثمار ---
+# ---- تحديد مبلغ الاستثمار ----
 @dp.message_handler(commands=['set_investment'])
 async def set_investment_start(message: types.Message):
     await message.answer("أرسل مبلغ الاستثمار بالدولار (مثال: 1000):")
@@ -160,7 +173,6 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     except ValueError:
         await message.reply("الرجاء إدخال مبلغ صحيح أكبر من 0.")
         return
-
     db = SessionLocal()
     user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
     if not user:
@@ -172,7 +184,7 @@ async def process_investment_amount(message: types.Message, state: FSMContext):
     await message.answer(f"تم تعيين مبلغ الاستثمار إلى {amount} دولار ✅")
     await state.finish()
 
-# --- بدء الاستثمار مع طلب موافقة في حال الرصيد أقل ---
+# ---- بدء الاستثمار مع تحقق الرصيد ----
 @dp.message_handler(commands=['start_invest'])
 async def start_invest(message: types.Message, state: FSMContext):
     db = SessionLocal()
@@ -190,8 +202,8 @@ async def start_invest(message: types.Message, state: FSMContext):
         db.close()
         return
 
-    # هنا مثال: تحقق من الرصيد الفعلي (استبدل بجلب الرصيد الحقيقي عبر API)
-    user_balance = user.investment_amount * 0.8  # لنفترض الرصيد أقل (80%) للمثال
+    # لنفترض أن الرصيد الفعلي هو 80% من المبلغ (مثال فقط)
+    user_balance = user.investment_amount * 0.8
 
     if user_balance < user.investment_amount:
         keyboard = types.InlineKeyboardMarkup()
@@ -206,7 +218,6 @@ async def start_invest(message: types.Message, state: FSMContext):
         db.close()
         return
 
-    # إذا الرصيد كافي، يبدأ الاستثمار مباشرة
     user.investment_status = "started"
     db.commit()
     db.close()
@@ -224,7 +235,7 @@ async def approval_callback(call: types.CallbackQuery, state: FSMContext):
         return
 
     if call.data == "use_full_balance":
-        user.investment_amount *= 0.8  # استخدام الرصيد المتاح (مثال)
+        user.investment_amount *= 0.8
         user.investment_status = "started"
         db.commit()
         db.close()
@@ -238,7 +249,7 @@ async def approval_callback(call: types.CallbackQuery, state: FSMContext):
         await call.message.edit_text("تم إلغاء بدء الاستثمار.")
         await state.finish()
 
-# --- إيقاف الاستثمار ---
+# ---- إيقاف الاستثمار ----
 @dp.message_handler(commands=['stop_invest'])
 async def stop_invest(message: types.Message):
     db = SessionLocal()
@@ -252,7 +263,7 @@ async def stop_invest(message: types.Message):
         db.close()
         await message.reply("لا يوجد استثمار جاري.")
 
-# --- الحلقة الرئيسية للاستثمار (مبسطة) ---
+# ---- حلقة الاستثمار ----
 async def investment_loop(telegram_id: int):
     db = SessionLocal()
     user = db.query(User).filter(User.telegram_id == telegram_id).first()
@@ -262,28 +273,27 @@ async def investment_loop(telegram_id: int):
 
     while user.investment_status == "started":
         try:
-            # جلب الأسعار (استبدل بجلب حقيقي من API)
-            binance_price, kucoin_price = 10000.0, 10020.0
-            # حساب فرصة المراجحة
+            # هنا لازم تستبدل بجلب حقيقي للأسعار من Binance و KuCoin
+            binance_price = 10000.0
+            kucoin_price = 10020.0
+
             diff = kucoin_price - binance_price
             fee = (binance_price + kucoin_price) * 0.001
             profit = diff - fee
             has_opportunity = profit > 0
 
             if has_opportunity:
-                # استشارة OpenAI
                 prompt = (
                     f"Given prices Binance: {binance_price}, KuCoin: {kucoin_price}, "
                     f"profit after fees: {profit:.2f}. Should we proceed with arbitrage? Answer YES or NO."
                 )
-                response = await openai.chat.completions.acreate(
+                response = openai.ChatCompletion.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 decision = response.choices[0].message.content.strip().upper().startswith("YES")
                 if decision:
-                    # تنفيذ الصفقة (مبسطة - أضف التنفيذ الحقيقي هنا)
-                    user.investment_amount += profit  # تحديث رصيد
+                    user.investment_amount += profit
                     db.commit()
                     await bot.send_message(telegram_id, f"تم تنفيذ مراجحة مربحة بقيمة {profit:.2f} دولار.")
                 else:
@@ -301,6 +311,6 @@ async def investment_loop(telegram_id: int):
     db.close()
     await bot.send_message(telegram_id, "تم إيقاف الاستثمار بناءً على طلبك.")
 
-# --- تشغيل البوت ---
+# -------------- تشغيل البوت -------------
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
