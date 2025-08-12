@@ -1,27 +1,52 @@
 import os
+import logging
 from dotenv import load_dotenv
-from utils import create_exchange, place_market_order, place_sandbox_market_order, USE_SANDBOX
-from database import get_setting
+from database import get_setting, init_db
+from utils import (
+    create_exchange,
+    place_market_order,
+    place_sandbox_market_order,
+    USE_SANDBOX
+)
+
+# إعدادات اللوج
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # تحميل متغيرات البيئة
 load_dotenv()
 
-# قراءة بيانات API من البيئة
-EXCHANGE_NAME = get_setting("exchange_name", os.getenv("EXCHANGE_NAME", "binance"))
-API_KEY = get_setting("api_key", os.getenv("API_KEY", ""))
-API_SECRET = get_setting("api_secret", os.getenv("API_SECRET", ""))
+def main():
+    # تهيئة قاعدة البيانات
+    init_db()
 
-# إنشاء الاتصال مع المنصة
-exchange = create_exchange(EXCHANGE_NAME, API_KEY, API_SECRET, sandbox=USE_SANDBOX)
+    # قراءة الإعدادات من قاعدة البيانات أو من .env
+    exchange_name = get_setting("exchange_name", os.getenv("EXCHANGE_NAME", "binance"))
+    api_key = get_setting("api_key", os.getenv("API_KEY", ""))
+    api_secret = get_setting("api_secret", os.getenv("API_SECRET", ""))
 
-def run_trade(symbol, side, amount):
+    if not api_key or not api_secret:
+        logging.error("❌ لم يتم إدخال API Key أو API Secret. يرجى ضبط الإعدادات أولاً.")
+        return
+
+    # إنشاء الاتصال مع المنصة
+    exchange = create_exchange(exchange_name, api_key, api_secret, sandbox=USE_SANDBOX)
+
+    # مثال لتنفيذ أمر
+    symbol = get_setting("trade_symbol", os.getenv("TRADE_SYMBOL", "BTC/USDT"))
+    side = get_setting("trade_side", os.getenv("TRADE_SIDE", "buy"))
+    amount = float(get_setting("trade_amount", os.getenv("TRADE_AMOUNT", "0.001")))
+
     if USE_SANDBOX:
-        print("⚠️ التشغيل على وضع Sandbox (تجريبي)")
-        return place_sandbox_market_order(exchange, symbol, side, amount)
+        logging.info("⚠️ التشغيل على وضع Sandbox (تجريبي)")
+        result = place_sandbox_market_order(exchange, symbol, side, amount)
     else:
-        return place_market_order(exchange, symbol, side, amount)
+        logging.info("🚀 تنفيذ أمر حقيقي في السوق")
+        result = place_market_order(exchange, symbol, side, amount)
+
+    logging.info(f"نتيجة الصفقة: {result}")
 
 if __name__ == "__main__":
-    # مثال للتجربة
-    trade_result = run_trade("BTC/USDT", "buy", 0.001)
-    print("نتيجة الصفقة:", trade_result)
+    main()
