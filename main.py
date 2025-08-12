@@ -10,8 +10,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from binance.client import Client as BinanceClient
 from kucoin.client import Market, Trade
@@ -100,18 +99,17 @@ async def verify_binance_keys(api_key, secret_key):
 async def verify_kucoin_keys(api_key, secret_key, passphrase):
     try:
         trade_client = Trade(api_key, secret_key, passphrase)
-        # هنا نستخدم طريقة صحيحة للتأكد من صلاحية المفاتيح
-        account_info = trade_client.get_account_overview()
-        if not account_info:
-            return False
-        return True
+        # استخدم get_accounts وليس get_account
+        accounts = trade_client.get_accounts()
+        if accounts:
+            return True
+        return False
     except Exception as e:
-        logging.error(f"Error verifying KuCoin keys: {e}")
+        print(f"Error verifying KuCoin keys: {e}")
         return False
 
 def user_platforms_keyboard(user: User):
     kb = InlineKeyboardMarkup(row_width=2)
-    # Binance button with status color
     binance_text = ("✅ Binance" if user.binance_active else "❌ Binance") + (" (مربوط)" if user.binance_api else " (غير مربوط)")
     kucoin_text = ("✅ KuCoin" if user.kucoin_active else "❌ KuCoin") + (" (مربوط)" if user.kucoin_api else " (غير مربوط)")
     kb.insert(InlineKeyboardButton(binance_text, callback_data="platform_binance"))
@@ -201,7 +199,7 @@ async def secret_key_received(message: types.Message, state: FSMContext):
     if platform == "binance":
         valid = await verify_binance_keys(data["api_key"], secret_key)
         if not valid:
-            await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة. حاول مجدداً.")
+            await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة. تأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
             await state.finish()
             return
         db = SessionLocal()
@@ -228,7 +226,7 @@ async def passphrase_received(message: types.Message, state: FSMContext):
 
     valid = await verify_kucoin_keys(data["api_key"], data["secret_key"], passphrase)
     if not valid:
-        await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة.\nتأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
+        await message.answer("❌ المفاتيح غير صحيحة أو لا تحتوي على الصلاحيات اللازمة. تأكد من تفعيل صلاحيات القراءة والتداول فقط، وأعد المحاولة.")
         await state.finish()
         return
 
@@ -273,8 +271,7 @@ async def start_invest_handler(call: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "menu_fake_invest")
 async def fake_invest_handler(call: types.CallbackQuery):
     await call.answer()
-    await call.message.edit_text("🛑 الاستثمار الوهمي يعمل الآن باستخدام بيانات حقيقية بدون استخدام أموال فعلية.\n"
-                                 "سيتم تنفيذ عمليات مراجحة افتراضية وتحليل ربح/خسارة بناءً على أسعار السوق.")
+    await call.message.edit_text("🛑 الاستثمار الوهمي غير مفعل حاليا. سيتم إضافته لاحقاً.")
 
 # 4- كشف حساب عن فترة
 @dp.callback_query_handler(lambda c: c.data == "menu_report")
@@ -329,16 +326,11 @@ async def report_end_date_received(message: types.Message, state: FSMContext):
     except Exception:
         await message.answer("❌ تنسيق التاريخ غير صحيح. استخدم: YYYY-MM-DD")
 
-# 5- حالة السوق (تحليل مبسط باستخدام OpenAI API)
+# 5- حالة السوق (تحليل مبسط - يمكن ربط OpenAI لاحقاً)
 @dp.callback_query_handler(lambda c: c.data == "menu_market_status")
 async def market_status_handler(call: types.CallbackQuery):
     await call.answer()
-    # هنا ضع تحليل السوق الحقيقي باستخدام OpenAI API أو أي خدمة خارجية
-    # حاليا نرسل رسالة ثابتة
-    text = ("📈 حالة السوق الحالية:\n"
-            "- السوق مستقر نسبياً.\n"
-            "- نصيحتي: ابدأ استثمارك إذا كنت مستعداً للمخاطرة.\n\n"
-            "💡 سيتم تطوير هذا القسم ليشمل تحليلات متقدمة مستقبلاً.")
+    text = "📈 حالة السوق الحالية:\n- السوق مستقر نسبياً.\n- نصيحتي: ابدأ استثمارك إذا كنت مستعداً للمخاطرة."
     await call.message.edit_text(text, reply_markup=main_menu_keyboard())
 
 # 6- إيقاف الاستثمار
@@ -437,11 +429,5 @@ async def run_arbitrage_loop(user_telegram_id):
 
 # ----------------------- START BOT -----------------------
 
-import asyncio
-
 if __name__ == "__main__":
-    async def main():
-        await bot.delete_webhook()
-        await dp.start_polling()
-
-    asyncio.run(main())
+    executor.start_polling(dp, skip_updates=True)
