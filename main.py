@@ -14,7 +14,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Import SQLAlchemy for database management
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey, BigInteger
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 # Import ccxt for unified crypto exchange API
@@ -58,15 +58,15 @@ SessionLocal = sessionmaker(bind=engine)
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, index=True)
+    telegram_id = Column(BigInteger, unique=True, index=True) # Changed to BigInteger
     # Encrypted API keys
-    api_keys = Column(String(500), default="{}") # Added length for VARCHAR
+    api_keys = Column(String(500), default="{}")
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")
     profit_share_owed = Column(Float, default=0.0)  # Amount owed to the bot
     max_daily_loss = Column(Float, default=0.0)
     current_daily_loss = Column(Float, default=0.0)
-    trade_pairs = Column(String(500), default="[]") # Added length for VARCHAR
+    trade_pairs = Column(String(500), default="[]")
     min_profit_percentage = Column(Float, default=0.5) # Minimum profit percentage for a trade
     
     trade_logs = relationship("TradeLog", back_populates="user")
@@ -89,7 +89,7 @@ class TradeLog(Base):
     __tablename__ = "trade_logs"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'))
-    trade_type = Column(String(50)) # Already has length
+    trade_type = Column(String(50))
     amount = Column(Float)
     profit = Column(Float)
     timestamp = Column(DateTime, default=datetime.utcnow)
