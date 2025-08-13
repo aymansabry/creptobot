@@ -5,7 +5,8 @@ import logging
 import json
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, types, executor
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor  # ✅ التصحيح هنا
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
@@ -33,6 +34,8 @@ if not all([BOT_TOKEN, DATABASE_URL, OPENAI_API_KEY, ENCRYPTION_KEY]):
     raise Exception("❌ Missing environment variables.")
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+# مفتاح التشفير لازم يكون Base64 urlsafe بطول 32 بايت
 cipher_suite = Fernet(ENCRYPTION_KEY.encode())
 
 bot = Bot(token=BOT_TOKEN)
@@ -48,7 +51,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, index=True)
-    api_keys = Column(String(500), default="{}")
+    api_keys = Column(String(500), default="{}")  # مخزنة مشفرة
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")  # "started" | "stopped"
     profit_share_owed = Column(Float, default=0.0)
@@ -59,22 +62,26 @@ class User(Base):
 
     trade_logs = relationship("TradeLog", back_populates="user")
 
+    # ✅ اسم واضح للـ property + setter سليم
     @property
-    def get_api_keys(self):
+    def api_keys_dict(self) -> dict:
         try:
-            decrypted_keys = cipher_suite.decrypt(self.api_keys.encode()).decode()
-            return json.loads(decrypted_keys)
+            decrypted = cipher_suite.decrypt(self.api_keys.encode()).decode()
+            return json.loads(decrypted)
         except (InvalidToken, json.JSONDecodeError, UnicodeDecodeError):
             return {}
 
-    @get_api_keys.setter
-    def set_api_keys(self, keys_dict):
-        encrypted_keys = cipher_suite.encrypt(json.dumps(keys_dict).encode()).decode()
-        self.api_keys = encrypted_keys
+    @api_keys_dict.setter
+    def api_keys_dict(self, keys_dict: dict):
+        payload = json.dumps(keys_dict).encode()
+        encrypted = cipher_suite.encrypt(payload).decode()
+        self.api_keys = encrypted
 
-    def is_api_keys_valid(self):
+    def is_api_keys_valid(self) -> bool:
         try:
-            self.get_api_keys
+            # محاولة فك + تحويل JSON فعلية
+            decrypted = cipher_suite.decrypt(self.api_keys.encode()).decode()
+            json.loads(decrypted)
             return True
         except Exception:
             return False
@@ -117,7 +124,7 @@ def get_main_menu_keyboard(is_admin=False):
         kb.add(InlineKeyboardButton("⚙️ لوحة تحكم المدير", callback_data="menu_admin_panel"))
     return kb
 
-def get_settings_keyboard(user: User):
+def get_settings_keyboard(user: 'User'):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
         InlineKeyboardButton("ربط/تعديل مفاتيح API", callback_data="settings_api_keys"),
@@ -130,10 +137,10 @@ def get_settings_keyboard(user: User):
     )
     return kb
 
-def get_platforms_keyboard(user: User):
+def get_platforms_keyboard(user: 'User'):
     kb = InlineKeyboardMarkup(row_width=2)
     platforms = ['binance', 'kucoin', 'okx', 'bybit', 'gateio']
-    user_keys = user.get_api_keys
+    user_keys = user.api_keys_dict  # ✅
     for platform in platforms:
         status_text = "✅" if user_keys.get(platform, {}).get('active', False) else "❌"
         link_status = "(مربوط)" if platform in user_keys else "(غير مربوط)"
@@ -141,8 +148,7 @@ def get_platforms_keyboard(user: User):
     kb.add(InlineKeyboardButton("⬅️ رجوع", callback_data="menu_settings"))
     return kb
 
-def get_link_platforms_keyboard(user: User):
-    # للاختيار بغرض الربط/التعديل
+def get_link_platforms_keyboard(user: 'User'):
     kb = InlineKeyboardMarkup(row_width=2)
     platforms = ['binance', 'kucoin', 'okx', 'bybit', 'gateio']
     for platform in platforms:
@@ -210,7 +216,7 @@ async def start_handler(message: types.Message):
             db.commit()
         # إصلاح أي مفاتيح تالفة
         if not user.is_api_keys_valid():
-            user.set_api_keys = {}
+            user.api_keys_dict = {}  # ✅
             db.commit()
             await message.answer("⚠️ تم إعادة ضبط مفاتيح API تلقائيًا.")
     await message.answer("أهلاً بك في بوت المراجحة، اختر من القائمة:", reply_markup=get_main_menu_keyboard())
@@ -270,9 +276,9 @@ async def secret_key_received(message: types.Message, state: FSMContext):
             return
         with SessionLocal() as db:
             user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-            keys = user.get_api_keys
+            keys = user.api_keys_dict  # ✅
             keys[platform_name] = {'key': data.get("api_key"), 'secret': secret_key, 'active': True}
-            user.set_api_keys = keys
+            user.api_keys_dict = keys  # ✅
             db.commit()
         await message.answer(f"✅ تم ربط {platform_name.capitalize()} بنجاح!")
         await state.finish()
@@ -295,11 +301,11 @@ async def passphrase_received(message: types.Message, state: FSMContext):
         return
     with SessionLocal() as db:
         user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        keys = user.get_api_keys
+        keys = user.api_keys_dict  # ✅
         keys[platform_name] = {
             'key': api_key, 'secret': secret_key, 'passphrase': passphrase, 'active': True
         }
-        user.set_api_keys = keys
+        user.api_keys_dict = keys  # ✅
         db.commit()
     await message.answer(f"✅ تم ربط {platform_name.capitalize()} بنجاح!")
     await state.finish()
@@ -321,12 +327,12 @@ async def toggle_platform_status(call: types.CallbackQuery):
     await call.answer()
     with SessionLocal() as db:
         user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-        user_keys = user.get_api_keys
+        user_keys = user.api_keys_dict  # ✅
         if platform_name not in user_keys:
             await call.message.answer(f"❌ لم يتم ربط مفاتيح {platform_name.capitalize()} بعد. ادخل إلى ربط/تعديل مفاتيح API أولاً.")
             return
         user_keys[platform_name]['active'] = not user_keys[platform_name].get('active', False)
-        user.set_api_keys = user_keys
+        user.api_keys_dict = user_keys  # ✅
         db.commit()
         status_text = "مفعلة" if user_keys[platform_name]['active'] else "غير مفعلة"
     await call.message.edit_text(f"✅ تم تغيير حالة {platform_name.capitalize()} إلى {status_text}.", reply_markup=get_settings_keyboard(user))
@@ -442,7 +448,7 @@ async def run_arbitrage_loop(user_telegram_id: int):
                 await bot.send_message(user_telegram_id, "❌ تم إيقاف الاستثمار بسبب خطأ في مفاتيح API.")
                 return
 
-            keys = user.get_api_keys
+            keys = user.api_keys_dict  # ✅
             active_platforms = [p for p, k in keys.items() if k.get('active')]
             if len(active_platforms) < 2:
                 await bot.send_message(user_telegram_id, "⚠️ يجب تفعيل منصتين على الأقل.")
