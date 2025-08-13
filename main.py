@@ -58,7 +58,7 @@ SessionLocal = sessionmaker(bind=engine)
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, index=True) # Changed to BigInteger
+    telegram_id = Column(BigInteger, unique=True, index=True)
     # Encrypted API keys
     api_keys = Column(String(500), default="{}")
     investment_amount = Column(Float, default=0.0)
@@ -122,8 +122,9 @@ def create_exchange_client(user_api_keys, platform_name):
         return None
 
     try:
-        if platform_name == 'kucoin' and 'passphrase' in platform_info:
-            exchange = ccxt.kucoin({
+        # Platforms that require a passphrase (like Kucoin, OKX, Bybit)
+        if platform_name in ['kucoin', 'okx', 'bybit'] and 'passphrase' in platform_info:
+            exchange = getattr(ccxt, platform_name)({
                 'apiKey': platform_info['key'],
                 'secret': platform_info['secret'],
                 'password': platform_info['passphrase'],
@@ -141,8 +142,9 @@ def create_exchange_client(user_api_keys, platform_name):
 # Unified function to verify API keys
 async def verify_exchange_keys(platform_name, api_key, secret_key, passphrase=None):
     try:
-        if platform_name == 'kucoin' and passphrase:
-            exchange = ccxt.kucoin({
+        # Platforms that require a passphrase (like Kucoin, OKX, Bybit)
+        if platform_name in ['kucoin', 'okx', 'bybit'] and passphrase:
+            exchange = getattr(ccxt, platform_name)({
                 'apiKey': api_key,
                 'secret': secret_key,
                 'password': passphrase,
@@ -187,13 +189,13 @@ def get_settings_keyboard(user: User):
 
 def get_platforms_keyboard(user: User):
     kb = InlineKeyboardMarkup(row_width=2)
-    # Example platforms, add more as needed
-    platforms = ['binance', 'kucoin']
+    # The list of all supported platforms
+    platforms = ['binance', 'kucoin', 'okx', 'bybit', 'gateio']
     user_keys = user.get_api_keys
     for platform in platforms:
-        status_text = "✅" if user_keys.get(platform, {}).get('active') else "❌"
+        status_text = "✅" if user_keys.get(platform, {}).get('active', False) else "❌"
         link_status = "(مربوط)" if platform in user_keys else "(غير مربوط)"
-        kb.insert(InlineKeyboardButton(f"{status_text} {platform.capitalize()} {link_status}", callback_data=f"platform_{platform}"))
+        kb.add(InlineKeyboardButton(f"{status_text} {platform.capitalize()} {link_status}", callback_data=f"toggle_platform_{platform}"))
     kb.add(InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu"))
     return kb
 
@@ -231,13 +233,41 @@ async def handle_api_keys_menu(call: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(Form.waiting_platform)
 
+@dp.callback_query_handler(lambda c: c.data.startswith("toggle_platform_"))
+async def toggle_platform_status(call: types.CallbackQuery):
+    platform_name = call.data.split("_")[2]
+    await call.answer()
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
+        user_keys = user.get_api_keys
+        
+        # Check if platform keys are linked
+        if platform_name not in user_keys:
+            await call.message.answer(f"❌ لم يتم ربط مفاتيح API لمنصة {platform_name.capitalize()} بعد.")
+            return
+
+        # Toggle the 'active' status
+        user_keys[platform_name]['active'] = not user_keys[platform_name].get('active', False)
+        user.set_api_keys = user_keys
+        db.commit()
+        
+        status_text = "مفعلة" if user_keys[platform_name]['active'] else "غير مفعلة"
+        await call.message.edit_text(f"✅ تم تغيير حالة منصة {platform_name.capitalize()} إلى {status_text}.",
+                                      reply_markup=get_settings_keyboard(user))
+
 @dp.callback_query_handler(lambda c: c.data.startswith("platform_"), state=Form.waiting_platform)
 async def platform_selected_for_api_keys(call: types.CallbackQuery, state: FSMContext):
     platform_name = call.data.split("_")[1]
     await state.update_data(platform=platform_name)
     await call.answer()
-    await call.message.edit_text(f"أرسل مفتاح API الخاص بمنصة {platform_name.capitalize()}:")
-    await state.set_state(Form.waiting_api_key)
+    
+    # Check for platforms that require a passphrase
+    if platform_name in ['kucoin', 'okx', 'bybit']:
+        await call.message.edit_text(f"أرسل مفتاح API الخاص بمنصة {platform_name.capitalize()}:")
+        await state.set_state(Form.waiting_api_key)
+    else:
+        await call.message.edit_text(f"أرسل مفتاح API الخاص بمنصة {platform_name.capitalize()}:")
+        await state.set_state(Form.waiting_api_key)
 
 @dp.message_handler(state=Form.waiting_api_key)
 async def api_key_received(message: types.Message, state: FSMContext):
@@ -246,12 +276,8 @@ async def api_key_received(message: types.Message, state: FSMContext):
     api_key = message.text.strip()
     await state.update_data(api_key=api_key)
 
-    if platform_name == 'kucoin':
-        await message.answer("أرسل الـ Secret Key الخاص بـ KuCoin:")
-        await state.set_state(Form.waiting_secret_key)
-    else:
-        await message.answer("أرسل الـ Secret Key:")
-        await state.set_state(Form.waiting_secret_key)
+    await message.answer("أرسل الـ Secret Key:")
+    await state.set_state(Form.waiting_secret_key)
 
 @dp.message_handler(state=Form.waiting_secret_key)
 async def secret_key_received(message: types.Message, state: FSMContext):
@@ -260,8 +286,8 @@ async def secret_key_received(message: types.Message, state: FSMContext):
     secret_key = message.text.strip()
     await state.update_data(secret_key=secret_key)
 
-    if platform_name == 'kucoin':
-        await message.answer("أرسل الـ Passphrase الخاص بـ KuCoin:")
+    if platform_name in ['kucoin', 'okx', 'bybit']:
+        await message.answer(f"أرسل الـ Passphrase الخاص بـ {platform_name.capitalize()}:")
         await state.set_state(Form.waiting_passphrase)
     else:
         is_valid = await verify_exchange_keys(platform_name, data.get("api_key"), secret_key)
