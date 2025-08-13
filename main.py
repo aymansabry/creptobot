@@ -384,7 +384,9 @@ async def run_arbitrage(user_id: int):
             db.refresh(user)
     
     db.close()
-    @dp.message_handler(commands=['start', 'help'])
+# ... (الاستيرادات والإعدادات الأساسية تبقى كما هي حتى سطر 387)
+
+@dp.message_handler(commands=['start', 'help'])
 async def cmd_start(message: types.Message):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
@@ -447,7 +449,8 @@ async def back_to_main(call: types.CallbackQuery):
     
     await call.message.edit_text(menu_msg, reply_markup=kb)
     db.close()
-    async def on_startup(dp):
+
+async def on_startup(dp):
     await bot.set_my_commands([
         types.BotCommand("start", "بدء استخدام البوت"),
         types.BotCommand("status", "حالة التداول الحالية"),
