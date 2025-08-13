@@ -384,7 +384,7 @@ async def run_arbitrage(user_id: int):
     
     db.close()
     @dp.message_handler(commands=['start', 'help'])
-@dp.message_handler(commands=['start', 'help'])
+
 async def cmd_start(message: types.Message):
     """معالجة أمر البدء والمساعدة"""
     db = SessionLocal()
