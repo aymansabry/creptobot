@@ -44,7 +44,7 @@ SessionLocal = sessionmaker(bind=engine)
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, index=True)
+    telegram_id = Column(BigInteger, unique=True, index=True)
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")  # started/stopped
     base_quote = Column(String(20), default="BTC/USDT")  # الزوج الافتراضي
