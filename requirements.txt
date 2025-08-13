@@ -4,3 +4,4 @@ PyMySQL
 python-binance
 kucoin-python
 openai
+ccxt
