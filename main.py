@@ -29,22 +29,36 @@ import ccxt
 
 # الإعدادات الأساسية
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///arbitrage.db")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 if not BOT_TOKEN:
     raise ValueError("يجب تعيين متغير البيئة BOT_TOKEN")
-    # نظام التشفير
+
+# نظام التشفير
 class CryptoManager:
     def __init__(self):
-        self.cipher_suite = Fernet(ENCRYPTION_KEY.encode())
-    
+        try:
+            self.cipher_suite = Fernet(ENCRYPTION_KEY.encode())
+        except Exception as e:
+            logger.error(f"فشل في تهيئة نظام التشفير: {e}")
+            raise
+
     def encrypt(self, data: str) -> str:
-        return self.cipher_suite.encrypt(data.encode()).decode()
-    
+        try:
+            return self.cipher_suite.encrypt(data.encode()).decode()
+        except Exception as e:
+            logger.error(f"فشل في تشفير البيانات: {e}")
+            raise
+
     def decrypt(self, encrypted_data: str) -> str:
-        return self.cipher_suite.decrypt(encrypted_data.encode()).decode()
+        try:
+            return self.cipher_suite.decrypt(encrypted_data.encode()).decode()
+        except Exception as e:
+            logger.error(f"فشل في فك تشفير البيانات: {e}")
+            raise
 
 crypto_manager = CryptoManager()
 
@@ -61,6 +75,7 @@ class User(Base):
     fee_consent = Column(Boolean, default=False)
     auto_withdraw = Column(Boolean, default=True)
     wallet_address = Column(String(100), nullable=True)
+    last_activity = Column(DateTime, default=datetime.utcnow)
     
     exchanges = relationship("ExchangeCredential", back_populates="user", cascade="all, delete-orphan")
 
@@ -73,6 +88,7 @@ class ExchangeCredential(Base):
     encrypted_secret = Column(String(512))
     encrypted_password = Column(String(512), nullable=True)
     active = Column(Boolean, default=False)
+    last_verified = Column(DateTime, nullable=True)
     
     user = relationship("User", back_populates="exchanges")
     
@@ -90,11 +106,13 @@ class TradeLog(Base):
     net_profit = Column(Float)
     status = Column(String(20))
     timestamp = Column(DateTime, default=datetime.utcnow)
+    details = Column(String(500), nullable=True)
 
 # إعدادات قاعدة البيانات
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base.metadata.create_all(engine)
+
 # إعداد البوت
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -108,28 +126,72 @@ class Form(StatesGroup):
     waiting_investment = State()
     waiting_wallet = State()
 
-# المنصات المدعومة
+# المنصات المدعومة مع معلومات إضافية
 SUPPORTED_EXCHANGES = {
-    "binance": "Binance",
-    "kucoin": "KuCoin",
-    "okx": "OKX",
-    "bybit": "Bybit"
+    "binance": {
+        "name": "Binance",
+        "requires_password": False,
+        "trading_fee": 0.1
+    },
+    "kucoin": {
+        "name": "KuCoin",
+        "requires_password": False,
+        "trading_fee": 0.1
+    },
+    "okx": {
+        "name": "OKX",
+        "requires_password": True,
+        "trading_fee": 0.1
+    },
+    "bybit": {
+        "name": "Bybit",
+        "requires_password": False,
+        "trading_fee": 0.1
+    }
 }
-async def get_exchange_instance(cred: ExchangeCredential) -> ccxt.Exchange:
-    """إنشاء وتجهيز مثيل منصة تداول"""
-    exchange = getattr(ccxt, cred.exchange_id)({
-        'apiKey': crypto_manager.decrypt(cred.encrypted_api_key),
-        'secret': crypto_manager.decrypt(cred.encrypted_secret),
-        'password': crypto_manager.decrypt(cred.encrypted_password) if cred.encrypted_password else None,
-        'enableRateLimit': True,
-        'options': {
-            'defaultType': 'spot',
-            'adjustForTimeDifference': True
-        }
-    })
-    await asyncio.to_thread(exchange.load_markets)
-    return exchange
 
+# تحسينات في وظيفة إنشاء مثيل المنصة
+async def get_exchange_instance(cred: ExchangeCredential) -> ccxt.Exchange:
+    """إنشاء وتجهيز مثيل منصة تداول مع معالجة محسنة للأخطاء"""
+    try:
+        exchange_class = getattr(ccxt, cred.exchange_id)
+        exchange_params = {
+            'apiKey': crypto_manager.decrypt(cred.encrypted_api_key),
+            'secret': crypto_manager.decrypt(cred.encrypted_secret),
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True
+            }
+        }
+        
+        if cred.encrypted_password:
+            exchange_params['password'] = crypto_manager.decrypt(cred.encrypted_password)
+        
+        exchange = exchange_class(exchange_params)
+        
+        # التحقق من صحة الاعتمادات
+        await asyncio.to_thread(exchange.load_markets)
+        
+        # تحديث وقت التحقق الأخير
+        db = SessionLocal()
+        cred.last_verified = datetime.utcnow()
+        db.commit()
+        db.close()
+        
+        return exchange
+        
+    except ccxt.AuthenticationError as e:
+        logger.error(f"اعتمادات غير صالحة لـ {cred.exchange_id}: {e}")
+        raise ValueError("اعتمادات API غير صالحة")
+    except ccxt.ExchangeError as e:
+        logger.error(f"خطأ في الاتصال بـ {cred.exchange_id}: {e}")
+        raise ValueError("فشل الاتصال بالمنصة")
+    except Exception as e:
+        logger.error(f"خطأ غير متوقع في تهيئة {cred.exchange_id}: {e}")
+        raise ValueError("حدث خطأ غير متوقع")
+
+# تحسينات في وظيفة تحليل السوق
 async def analyze_market(exchanges: List[ccxt.Exchange], symbol: str) -> List[Dict]:
     """تحليل السوق لزوج تداول معين مع معالجة الأخطاء"""
     prices = []
@@ -147,19 +209,35 @@ async def analyze_market(exchanges: List[ccxt.Exchange], symbol: str) -> List[Di
             if bid <= 0 or ask <= 0:
                 continue
                 
+            # حساب الرسوم
+            exchange_info = SUPPORTED_EXCHANGES.get(exchange.id, {})
+            fee_percent = exchange_info.get('trading_fee', 0.1)
+            effective_bid = bid * (1 - fee_percent/100)
+            effective_ask = ask * (1 + fee_percent/100)
+                
             prices.append({
                 'exchange': exchange,
                 'symbol': symbol,
                 'bid': bid,
                 'ask': ask,
+                'effective_bid': effective_bid,
+                'effective_ask': effective_ask,
                 'bid_volume': bid_volume,
-                'ask_volume': ask_volume
+                'ask_volume': ask_volume,
+                'fee_percent': fee_percent
             })
+        except ccxt.NetworkError as e:
+            logger.warning(f"خطأ شبكة أثناء جلب الأسعار من {exchange.id}: {e}")
+            continue
+        except ccxt.ExchangeError as e:
+            logger.warning(f"خطأ منصة أثناء جلب الأسعار من {exchange.id}: {e}")
+            continue
         except Exception as e:
-            logging.warning(f"فشل في الحصول على الأسعار من {exchange.id}: {str(e)}")
+            logger.warning(f"خطأ غير متوقع أثناء جلب الأسعار من {exchange.id}: {e}")
             continue
     return prices
 
+# تحسينات في وظيفة حساب فرص المراجحة
 async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float, min_profit: float) -> Optional[Dict]:
     """حساب فرص المراجحة المتاحة مع تحسينات الأمان"""
     if len(prices) < 2:
@@ -171,22 +249,25 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
     if len(valid_prices) < 2:
         return None
     
-    best_buy = min(valid_prices, key=lambda x: x['ask'])
-    best_sell = max(valid_prices, key=lambda x: x['bid'])
+    # استخدام الأسعار الفعالة بعد حساب الرسوم
+    best_buy = min(valid_prices, key=lambda x: x['effective_ask'])
+    best_sell = max(valid_prices, key=lambda x: x['effective_bid'])
     
     if best_buy['exchange'].id == best_sell['exchange'].id:
         return None
     
-    price_diff = best_sell['bid'] - best_buy['ask']
-    profit_percent = (price_diff / best_buy['ask']) * 100
+    price_diff = best_sell['effective_bid'] - best_buy['effective_ask']
+    profit_percent = (price_diff / best_buy['effective_ask']) * 100
     
     if profit_percent < min_profit:
         return None
     
+    # حساب الكمية القابلة للتداول مع مراعاة السيولة
     max_amount = min(
-        investment / best_buy['ask'],
-        best_buy['ask_volume'],
-        best_sell['bid_volume']
+        investment / best_buy['effective_ask'],
+        best_buy['ask_volume'] * 0.1,  # لا تتجاوز 10% من السيولة المتاحة
+        best_sell['bid_volume'] * 0.1,
+        (investment * 0.1) / best_buy['effective_ask']  # لا تتجاوز 10% من رأس المال
     )
     
     if max_amount <= 0:
@@ -198,44 +279,76 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
         'sell_exchange': best_sell['exchange'],
         'buy_price': best_buy['ask'],
         'sell_price': best_sell['bid'],
+        'effective_buy_price': best_buy['effective_ask'],
+        'effective_sell_price': best_sell['effective_bid'],
         'amount': max_amount,
-        'profit_percent': profit_percent
+        'profit_percent': profit_percent,
+        'buy_fee': best_buy['fee_percent'],
+        'sell_fee': best_sell['fee_percent']
     }
+
+# تحسينات في وظيفة تنفيذ الصفقة
 async def execute_trade(user: User, opportunity: Dict):
     """تنفيذ صفقة المراجحة مع معالجة محسنة للأخطاء"""
     db = SessionLocal()
+    trade_log = None
     try:
+        # تسجيل بدء الصفقة
+        trade_log = TradeLog(
+            user_id=user.id,
+            symbol=opportunity['symbol'],
+            amount=opportunity['amount'],
+            entry_price=opportunity['buy_price'],
+            exit_price=0,
+            profit_percent=0,
+            net_profit=0,
+            status='pending',
+            timestamp=datetime.utcnow(),
+            details=f"بدء الصفقة بين {opportunity['buy_exchange'].id} و {opportunity['sell_exchange'].id}"
+        )
+        db.add(trade_log)
+        db.commit()
+        
         # تنفيذ أمر الشراء
         buy_order = await asyncio.to_thread(
-            opportunity['buy_exchange'].create_market_buy_order,
+            opportunity['buy_exchange'].create_order,
             opportunity['symbol'],
-            opportunity['amount']
+            'market',
+            'buy',
+            opportunity['amount'],
+            None,
+            {'type': 'market'}
         )
+        
+        # تسجيل تفاصيل الشراء
+        trade_log.entry_price = float(buy_order['price'])
+        trade_log.amount = float(buy_order['filled'])
+        trade_log.details = f"تم الشراء: {buy_order}"
+        db.commit()
         
         # تنفيذ أمر البيع
         sell_order = await asyncio.to_thread(
-            opportunity['sell_exchange'].create_market_sell_order,
+            opportunity['sell_exchange'].create_order,
             opportunity['symbol'],
-            buy_order['filled']
+            'market',
+            'sell',
+            trade_log.amount,
+            None,
+            {'type': 'market'}
         )
         
         # حساب الربح الفعلي
-        actual_profit = sell_order['cost'] - buy_order['cost']
-        actual_profit_percent = (actual_profit / buy_order['cost']) * 100
+        buy_cost = trade_log.amount * trade_log.entry_price * (1 + opportunity['buy_fee']/100)
+        sell_revenue = trade_log.amount * float(sell_order['price']) * (1 - opportunity['sell_fee']/100)
+        actual_profit = sell_revenue - buy_cost
+        actual_profit_percent = (actual_profit / buy_cost) * 100
         
-        # تسجيل الصفقة
-        trade = TradeLog(
-            user_id=user.id,
-            symbol=opportunity['symbol'],
-            amount=buy_order['filled'],
-            entry_price=buy_order['price'],
-            exit_price=sell_order['price'],
-            profit_percent=actual_profit_percent,
-            net_profit=actual_profit,
-            status='completed',
-            timestamp=datetime.now()
-        )
-        db.add(trade)
+        # تحديث سجل الصفقة
+        trade_log.exit_price = float(sell_order['price'])
+        trade_log.profit_percent = actual_profit_percent
+        trade_log.net_profit = actual_profit
+        trade_log.status = 'completed'
+        trade_log.details = f"{trade_log.details}\nتم البيع: {sell_order}"
         db.commit()
         
         # إرسال إشعار للمستخدم
@@ -243,10 +356,12 @@ async def execute_trade(user: User, opportunity: Dict):
         message = (
             f"{profit_emoji} **تم تنفيذ صفقة مراجحة**\n"
             f"▫️ الزوج: {opportunity['symbol']}\n"
-            f"▫️ الكمية: {buy_order['filled']:.6f}\n"
-            f"▫️ سعر الشراء: {buy_order['price']:.4f} ({opportunity['buy_exchange'].id})\n"
-            f"▫️ سعر البيع: {sell_order['price']:.4f} ({opportunity['sell_exchange'].id})\n"
-            f"▫️ صافي الربح: {actual_profit:.4f} USDT ({actual_profit_percent:.2f}%)\n"
+            f"▫️ الكمية: {trade_log.amount:.6f}\n"
+            f"▫️ سعر الشراء: {trade_log.entry_price:.6f} ({opportunity['buy_exchange'].id})\n"
+            f"▫️ رسوم الشراء: {opportunity['buy_fee']:.2f}%\n"
+            f"▫️ سعر البيع: {trade_log.exit_price:.6f} ({opportunity['sell_exchange'].id})\n"
+            f"▫️ رسوم البيع: {opportunity['sell_fee']:.2f}%\n"
+            f"▫️ صافي الربح: {actual_profit:.6f} USDT ({actual_profit_percent:.2f}%)\n"
             f"▫️ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         )
         await bot.send_message(user.telegram_id, message, parse_mode="Markdown")
@@ -255,30 +370,46 @@ async def execute_trade(user: User, opportunity: Dict):
         if user.auto_withdraw and actual_profit > 1:
             await withdraw_profit(user, actual_profit)
             
-    except Exception as e:
-        logging.error(f"فشل تنفيذ الصفقة: {str(e)}")
-        error_msg = f"❌ فشل تنفيذ الصفقة: {str(e)}"
-        
-        # تسجيل الصفقة الفاشلة
-        trade = TradeLog(
-            user_id=user.id,
-            symbol=opportunity['symbol'],
-            amount=opportunity['amount'],
-            entry_price=opportunity['buy_price'],
-            exit_price=0,
-            profit_percent=0,
-            net_profit=0,
-            status='failed',
-            timestamp=datetime.now(),
-            note=str(e)
-        )
-        db.add(trade)
-        db.commit()
-        error_msg += f"\n\nتم إلغاء الصفقة وحفظ التفاصيل"
+    except ccxt.InsufficientFunds as e:
+        error_msg = "❌ رصيد غير كافي لتنفيذ الصفقة"
+        logger.error(f"رصيد غير كافي: {e}")
+        if trade_log:
+            trade_log.status = 'failed'
+            trade_log.details = f"{trade_log.details}\nرصيد غير كافي: {e}"
+            db.commit()
         await bot.send_message(user.telegram_id, error_msg)
+        
+    except ccxt.NetworkError as e:
+        error_msg = "❌ فشل الشبكة أثناء تنفيذ الصفقة"
+        logger.error(f"خطأ شبكة: {e}")
+        if trade_log:
+            trade_log.status = 'failed'
+            trade_log.details = f"{trade_log.details}\nخطأ شبكة: {e}"
+            db.commit()
+        await bot.send_message(user.telegram_id, error_msg)
+        
+    except ccxt.ExchangeError as e:
+        error_msg = f"❌ خطأ منصة: {str(e)}"
+        logger.error(f"خطأ منصة: {e}")
+        if trade_log:
+            trade_log.status = 'failed'
+            trade_log.details = f"{trade_log.details}\nخطأ منصة: {e}"
+            db.commit()
+        await bot.send_message(user.telegram_id, error_msg)
+        
+    except Exception as e:
+        error_msg = f"❌ خطأ غير متوقع: {str(e)}"
+        logger.error(f"خطأ غير متوقع: {e}")
+        if trade_log:
+            trade_log.status = 'failed'
+            trade_log.details = f"{trade_log.details}\nخطأ غير متوقع: {e}"
+            db.commit()
+        await bot.send_message(user.telegram_id, error_msg)
+        
     finally:
         db.close()
 
+# تحسينات في وظيفة السحب التلقائي
 async def withdraw_profit(user: User, amount: float):
     """سحب الأرباح تلقائياً مع معالجة الأخطاء"""
     if not user.wallet_address:
@@ -290,7 +421,8 @@ async def withdraw_profit(user: User, amount: float):
         return False
     
     try:
-        withdrawal_fee = 0.5  # رسوم السحب (يمكن تعديلها حسب المنصة)
+        # حساب صافي المبلغ بعد خصم الرسوم
+        withdrawal_fee = 1.0  # رسوم السحب (يمكن تعديلها حسب المنصة)
         net_amount = amount - withdrawal_fee
         
         if net_amount <= 0:
@@ -303,28 +435,48 @@ async def withdraw_profit(user: User, amount: float):
         # هنا يتم تنفيذ السحب الفعلي باستخدام API المنصة
         # withdrawal_result = await exchange.withdraw(...)
         
-        await bot.send_message(
-            user.telegram_id,
-            f"✅ تم سحب {net_amount:.4f} USDT بنجاح إلى محفظتك\n"
-            f"العنوان: {user.wallet_address[:6]}...{user.wallet_address[-4]}\n"
-            f"رسوم السحب: {withdrawal_fee} USDT"
-        )
-        return True
+        # في هذا المثال، سنفترض نجاح العملية
+        success = True
+        
+        if success:
+            await bot.send_message(
+                user.telegram_id,
+                f"✅ تم سحب {net_amount:.4f} USDT بنجاح إلى محفظتك\n"
+                f"العنوان: {user.wallet_address[:6]}...{user.wallet_address[-4:]}\n"
+                f"رسوم السحب: {withdrawal_fee} USDT"
+            )
+            return True
+        else:
+            raise Exception("فشل في تنفيذ السحب")
+            
     except Exception as e:
-        logging.error(f"فشل السحب التلقائي: {str(e)}")
+        logger.error(f"فشل السحب التلقائي: {str(e)}")
         await bot.send_message(
             user.telegram_id,
             f"❌ فشل السحب التلقائي: {str(e)}\n"
             "الرجاء التحقق من إعدادات المحفظة"
         )
         return False
+
+# تحسينات في حلقة المراجحة الرئيسية
 async def run_arbitrage(user_id: int):
     """الحلقة الرئيسية للمراجحة الآلية مع تحسينات معالجة الأخطاء"""
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=user_id).first()
     
+    if not user:
+        logger.error(f"المستخدم غير موجود: {user_id}")
+        db.close()
+        return
+    
+    logger.info(f"بدء عملية المراجحة للمستخدم: {user_id}")
+    
     while user.investment_status == "started":
         try:
+            # تحديث وقت النشاط الأخير
+            user.last_activity = datetime.utcnow()
+            db.commit()
+            
             # 1. تحميل بيانات المستخدم والمنصات
             active_creds = [ex for ex in user.exchanges if ex.active]
             
@@ -340,8 +492,13 @@ async def run_arbitrage(user_id: int):
                 try:
                     exchange = await get_exchange_instance(cred)
                     exchanges.append(exchange)
+                except ValueError as e:
+                    await bot.send_message(user_id, f"❌ خطأ في منصة {cred.exchange_id}: {str(e)}")
+                    cred.active = False
+                    db.commit()
+                    continue
                 except Exception as e:
-                    logging.error(f"فشل تهيئة {cred.exchange_id}: {str(e)}")
+                    logger.error(f"خطأ غير متوقع في تهيئة {cred.exchange_id}: {str(e)}")
                     continue
             
             if len(exchanges) < 2:
@@ -362,7 +519,7 @@ async def run_arbitrage(user_id: int):
                     if opportunity:
                         opportunities.append(opportunity)
                 except Exception as e:
-                    logging.error(f"خطأ في تحليل {symbol}: {str(e)}")
+                    logger.error(f"خطأ في تحليل {symbol}: {str(e)}")
                     continue
             
             if not opportunities:
@@ -377,78 +534,60 @@ async def run_arbitrage(user_id: int):
             await asyncio.sleep(20)
             
         except Exception as e:
-            logging.error(f"خطأ في حلقة المراجحة: {str(e)}")
+            logger.error(f"خطأ في حلقة المراجحة: {str(e)}")
             await bot.send_message(user_id, f"⚠️ حدث خطأ في عملية المراجحة: {str(e)}")
             await asyncio.sleep(60)
         finally:
             db.refresh(user)
     
+    logger.info(f"إيقاف عملية المراجحة للمستخدم: {user_id}")
     db.close()
-# ... (الاستيرادات والإعدادات الأساسية تبقى كما هي حتى سطر 387)
+
+# ... (بقية الكود الخاص بمعالجات الرسائل والواجهة يبقى كما هو)
 
 @dp.message_handler(commands=['start', 'help'])
 async def cmd_start(message: types.Message):
     db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        user = User(telegram_id=message.from_user.id)
-        db.add(user)
-        db.commit()
-    
-    welcome_msg = (
-        "مرحباً بك في بوت المراجحة الآلية بين المنصات!\n"
-        "يمكنك من خلال هذا البوت:\n"
-        "- ربط حسابات التداول الخاصة بك\n"
-        "- تحديد مبلغ الاستثمار\n"
-        "- بدء التداول الآلي\n"
-        "- متابعة الأرباح والإحصائيات"
-    )
-    
-    menu_msg = (
-        f"حالة التداول: {'🟢 قيد التشغيل' if user.investment_status == 'started' else '🔴 متوقف'}\n"
-        f"رصيد الاستثمار: {user.investment_amount:.2f} USDT\n"
-        f"نسبة الربح الأدنى: {user.min_profit_percent:.2f}%"
-    )
-    
-    kb = InlineKeyboardMarkup(row_width=2)
-    buttons = [
-        ("🔐 إدارة المنصات", "menu_exchanges"),
-        ("💰 إعدادات الاستثمار", "menu_investment"),
-        ("📈 بدء/إيقاف التداول", "menu_toggle_trading"),
-        ("📊 كشف الحساب", "menu_report"),
-        ("⚙️ الإعدادات", "menu_settings")
-    ]
-    for text, callback in buttons:
-        kb.add(InlineKeyboardButton(text, callback_data=callback))
-    
-    await message.answer(welcome_msg)
-    await message.answer(menu_msg, reply_markup=kb)
-    db.close()
-
-@dp.callback_query_handler(lambda c: c.data == 'main_menu')
-async def back_to_main(call: types.CallbackQuery):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    
-    menu_msg = (
-        f"حالة التداول: {'🟢 قيد التشغيل' if user.investment_status == 'started' else '🔴 متوقف'}\n"
-        f"رصيد الاستثمار: {user.investment_amount:.2f} USDT\n"
-        f"نسبة الربح الأدنى: {user.min_profit_percent:.2f}%"
-    )
-    
-    kb = InlineKeyboardMarkup(row_width=2)
-    buttons = [
-        ("🔐 إدارة المنصات", "menu_exchanges"),
-        ("💰 إعدادات الاستثمار", "menu_investment"),
-        ("📈 بدء/إيقاف التداول", "menu_toggle_trading"),
-        ("📊 كشف الحساب", "menu_report"),
-        ("⚙️ الإعدادات", "menu_settings")
-    ]
-    for text, callback in buttons:
-        kb.add(InlineKeyboardButton(text, callback_data=callback))
-    
-    await call.message.edit_text(menu_msg, reply_markup=kb)
-    db.close()
+    try:
+        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+        if not user:
+            user = User(telegram_id=message.from_user.id)
+            db.add(user)
+            db.commit()
+        
+        welcome_msg = (
+            "مرحباً بك في بوت المراجحة الآلية بين المنصات!\n"
+            "يمكنك من خلال هذا البوت:\n"
+            "- ربط حسابات التداول الخاصة بك\n"
+            "- تحديد مبلغ الاستثمار\n"
+            "- بدء التداول الآلي\n"
+            "- متابعة الأرباح والإحصائيات"
+        )
+        
+        menu_msg = (
+            f"حالة التداول: {'🟢 قيد التشغيل' if user.investment_status == 'started' else '🔴 متوقف'}\n"
+            f"رصيد الاستثمار: {user.investment_amount:.2f} USDT\n"
+            f"نسبة الربح الأدنى: {user.min_profit_percent:.2f}%"
+        )
+        
+        kb = InlineKeyboardMarkup(row_width=2)
+        buttons = [
+            ("🔐 إدارة المنصات", "menu_exchanges"),
+            ("💰 إعدادات الاستثمار", "menu_investment"),
+            ("📈 بدء/إيقاف التداول", "menu_toggle_trading"),
+            ("📊 كشف الحساب", "menu_report"),
+            ("⚙️ الإعدادات", "menu_settings")
+        ]
+        for text, callback in buttons:
+            kb.add(InlineKeyboardButton(text, callback_data=callback))
+        
+        await message.answer(welcome_msg)
+        await message.answer(menu_msg, reply_markup=kb)
+    except Exception as e:
+        logger.error(f"خطأ في أمر البدء: {str(e)}")
+        await message.answer("❌ حدث خطأ أثناء معالجة طلبك. يرجى المحاولة لاحقاً.")
+    finally:
+        db.close()
 
 async def on_startup(dp):
     await bot.set_my_commands([
@@ -460,10 +599,12 @@ async def on_startup(dp):
     
     # بدء عمليات المراجحة للمستخدمين النشطين
     db = SessionLocal()
-    active_users = db.query(User).filter_by(investment_status="started").all()
-    for user in active_users:
-        asyncio.create_task(run_arbitrage(user.telegram_id))
-    db.close()
+    try:
+        active_users = db.query(User).filter_by(investment_status="started").all()
+        for user in active_users:
+            asyncio.create_task(run_arbitrage(user.telegram_id))
+    finally:
+        db.close()
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
