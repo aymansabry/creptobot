@@ -60,13 +60,13 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True, index=True)
     # Encrypted API keys
-    api_keys = Column(String, default="{}")
+    api_keys = Column(String(500), default="{}") # Added length for VARCHAR
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")
     profit_share_owed = Column(Float, default=0.0)  # Amount owed to the bot
     max_daily_loss = Column(Float, default=0.0)
     current_daily_loss = Column(Float, default=0.0)
-    trade_pairs = Column(String, default="[]")  # e.g., '["BTC/USDT", "ETH/USDT"]'
+    trade_pairs = Column(String(500), default="[]") # Added length for VARCHAR
     min_profit_percentage = Column(Float, default=0.5) # Minimum profit percentage for a trade
     
     trade_logs = relationship("TradeLog", back_populates="user")
@@ -89,7 +89,7 @@ class TradeLog(Base):
     __tablename__ = "trade_logs"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'))
-    trade_type = Column(String(50)) # e.g., "Buy Binance / Sell KuCoin"
+    trade_type = Column(String(50)) # Already has length
     amount = Column(Float)
     profit = Column(Float)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -97,6 +97,11 @@ class TradeLog(Base):
     user = relationship("User", back_populates="trade_logs")
 
 Base.metadata.create_all(engine)
+# NOTE: If you update the database schema (e.g., by adding new columns),
+# and you get an "Unknown column" error, you will need to
+# manually drop the existing table from your database and restart the bot.
+# This will allow SQLAlchemy to recreate the table with the new schema.
+# Use a command like `DROP TABLE users;` in your database client.
 
 # --- 3. FSM States for Conversation Flow ---
 class Form(StatesGroup):
