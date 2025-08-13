@@ -201,7 +201,7 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
         'amount': max_amount,
         'profit_percent': profit_percent
     }
-   async def execute_trade(user: User, opportunity: Dict):
+async def execute_trade(user: User, opportunity: Dict):
     """تنفيذ صفقة المراجحة مع معالجة محسنة للأخطاء"""
     db = SessionLocal()
     try:
@@ -318,7 +318,7 @@ async def withdraw_profit(user: User, amount: float):
             "الرجاء التحقق من إعدادات المحفظة"
         )
         return False
-        async def run_arbitrage(user_id: int):
+async def run_arbitrage(user_id: int):
     """الحلقة الرئيسية للمراجحة الآلية مع تحسينات معالجة الأخطاء"""
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=user_id).first()
