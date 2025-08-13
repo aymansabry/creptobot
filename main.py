@@ -317,8 +317,7 @@ async def withdraw_profit(user: User, amount: float):
             f"❌ فشل السحب التلقائي: {str(e)}\n"
             "الرجاء التحقق من إعدادات المحفظة"
         )
-        return False
-        async def run_arbitrage(user_id: int):
+async def run_arbitrage(user_id: int):
     """الحلقة الرئيسية للمراجحة الآلية مع تحسينات معالجة الأخطاء"""
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=user_id).first()
