@@ -26,7 +26,7 @@ import openai
 
 # Set up logging for better debugging
 logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message.md)s')
 
 # --- 1. Environment Variables Configuration ---
 # Ensure all required environment variables are set.
@@ -84,6 +84,14 @@ class User(Base):
     def set_api_keys(self, keys_dict):
         encrypted_keys = cipher_suite.encrypt(json.dumps(keys_dict).encode()).decode()
         self.api_keys = encrypted_keys
+
+    def is_api_keys_valid(self):
+        """Checks if the stored API keys can be decrypted without error."""
+        try:
+            self.get_api_keys
+            return True
+        except Exception:
+            return False
 
 class TradeLog(Base):
     __tablename__ = "trade_logs"
@@ -176,6 +184,10 @@ def get_main_menu_keyboard(is_admin=False):
 
 def get_settings_keyboard(user: User):
     kb = InlineKeyboardMarkup(row_width=2)
+    # Add a reset button if API keys are corrupted
+    if not user.is_api_keys_valid():
+        kb.add(InlineKeyboardButton("⚠️ إعادة ضبط مفاتيح API", callback_data="settings_reset_api_keys"))
+
     kb.add(
         InlineKeyboardButton("ربط/تعديل مفاتيح API", callback_data="settings_api_keys"),
         InlineKeyboardButton("تحديد مبلغ الاستثمار", callback_data="settings_investment_amount"),
@@ -213,7 +225,10 @@ async def start_handler(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "main_menu")
 async def back_to_main(call: types.CallbackQuery):
     await call.answer()
-    await call.message.edit_text("القائمة الرئيسية:", reply_markup=get_main_menu_keyboard())
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
+    await call.message.edit_text("القائمة الرئيسية:", reply_markup=get_main_menu_keyboard(user))
+
 
 @dp.callback_query_handler(lambda c: c.data == "menu_settings")
 async def show_settings_menu(call: types.CallbackQuery):
@@ -254,6 +269,16 @@ async def toggle_platform_status(call: types.CallbackQuery):
         status_text = "مفعلة" if user_keys[platform_name]['active'] else "غير مفعلة"
         await call.message.edit_text(f"✅ تم تغيير حالة منصة {platform_name.capitalize()} إلى {status_text}.",
                                       reply_markup=get_settings_keyboard(user))
+
+@dp.callback_query_handler(lambda c: c.data == "settings_reset_api_keys")
+async def reset_api_keys_handler(call: types.CallbackQuery):
+    await call.answer()
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
+        user.set_api_keys = {}
+        db.commit()
+    await call.message.edit_text("✅ تم إعادة ضبط مفاتيح API الخاصة بك. يمكنك الآن ربط المفاتيح مرة أخرى من القائمة الرئيسية.", reply_markup=get_main_menu_keyboard())
+
 
 @dp.callback_query_handler(lambda c: c.data.startswith("platform_"), state=Form.waiting_platform)
 async def platform_selected_for_api_keys(call: types.CallbackQuery, state: FSMContext):
@@ -352,6 +377,13 @@ async def run_arbitrage_loop(user_telegram_id, bot: Bot):
                 return
 
             user_keys = user.get_api_keys
+            # Check if API keys are valid before proceeding
+            if not user.is_api_keys_valid():
+                user.investment_status = "stopped"
+                db.commit()
+                await bot.send_message(user_telegram_id, "❌ تم إيقاف الاستثمار بسبب وجود خطأ في مفاتيح API. يرجى إعادة ضبطها من قائمة الإعدادات.")
+                return
+
             available_platforms = [p for p, k in user_keys.items() if k.get('active')]
             
             # Skip if less than two platforms are active
