@@ -22,11 +22,10 @@ import ccxt
 
 # Import cryptography for secure API key management
 from cryptography.fernet import Fernet
-import openai
+# The new OpenAI library syntax requires importing the main class.
+from openai import OpenAI
 
 # Set up logging for better debugging
-# The original format had a typo, '%(message.md)s', which caused a KeyError.
-# This line is corrected to use the standard message format '%(message)s'.
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -41,7 +40,8 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")  # A key for encrypting API keys
 if not all([BOT_TOKEN, DATABASE_URL, OPENAI_API_KEY, ENCRYPTION_KEY]):
     raise Exception("❌ Missing one or more environment variables. Ensure BOT_TOKEN, DATABASE_URL, OPENAI_API_KEY, and ENCRYPTION_KEY are set.")
 
-openai.api_key = OPENAI_API_KEY
+# Initialize the OpenAI client for the new API syntax
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize the Fernet encryption suite
 cipher_suite = Fernet(ENCRYPTION_KEY.encode())
@@ -171,8 +171,11 @@ async def verify_exchange_keys(platform_name, api_key, secret_key, passphrase=No
         return False
 
 # --- 5. Keyboard Layouts ---
-def get_main_menu_keyboard(is_admin=False):
+def get_main_menu_keyboard(is_admin=False, show_reset_button=False):
     kb = InlineKeyboardMarkup(row_width=1)
+    if show_reset_button:
+        kb.add(InlineKeyboardButton("⚠️ إعادة ضبط مفاتيح API", callback_data="settings_reset_api_keys"))
+    
     kb.add(
         InlineKeyboardButton("1️⃣ إعدادات التداول", callback_data="menu_settings"),
         InlineKeyboardButton("2️⃣ ابدأ الاستثمار", callback_data="menu_start_invest"),
@@ -222,14 +225,20 @@ async def start_handler(message: types.Message):
             user = User(telegram_id=message.from_user.id)
             db.add(user)
             db.commit()
-    await message.answer("أهلاً بك في بوت المراجحة، اختر من القائمة:", reply_markup=get_main_menu_keyboard())
+        
+        # Check for corrupted API keys on start and offer a direct reset
+        show_reset = not user.is_api_keys_valid()
+        
+    await message.answer("أهلاً بك في بوت المراجحة، اختر من القائمة:", reply_markup=get_main_menu_keyboard(show_reset_button=show_reset))
 
 @dp.callback_query_handler(lambda c: c.data == "main_menu")
 async def back_to_main(call: types.CallbackQuery):
     await call.answer()
     with SessionLocal() as db:
         user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-    await call.message.edit_text("القائمة الرئيسية:", reply_markup=get_main_menu_keyboard(user))
+        # Check for corrupted API keys on menu return and offer a direct reset
+        show_reset = not user.is_api_keys_valid()
+    await call.message.edit_text("القائمة الرئيسية:", reply_markup=get_main_menu_keyboard(show_reset_button=show_reset))
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_settings")
@@ -470,7 +479,8 @@ async def get_market_analysis():
     # Use a real-time price fetcher for better accuracy
     # For now, we'll rely on a basic prompt.
     try:
-        response = openai.ChatCompletion.create(
+        # Corrected OpenAI API call for versions >= 1.0.0
+        response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a helpful crypto market analyst."},
