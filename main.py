@@ -21,7 +21,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 import ccxt
 
 # Import cryptography for secure API key management
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 # The new OpenAI library syntax requires importing the main class.
 from openai import OpenAI
 
@@ -78,7 +78,7 @@ class User(Base):
         try:
             decrypted_keys = cipher_suite.decrypt(self.api_keys.encode()).decode()
             return json.loads(decrypted_keys)
-        except Exception as e:
+        except (InvalidToken, json.JSONDecodeError, UnicodeDecodeError) as e:
             logging.error(f"Error decrypting API keys for user {self.id}: {e}")
             return {}
             
@@ -92,7 +92,7 @@ class User(Base):
         try:
             self.get_api_keys
             return True
-        except Exception:
+        except (InvalidToken, json.JSONDecodeError, UnicodeDecodeError):
             return False
 
 class TradeLog(Base):
@@ -171,11 +171,8 @@ async def verify_exchange_keys(platform_name, api_key, secret_key, passphrase=No
         return False
 
 # --- 5. Keyboard Layouts ---
-def get_main_menu_keyboard(is_admin=False, show_reset_button=False):
+def get_main_menu_keyboard(is_admin=False):
     kb = InlineKeyboardMarkup(row_width=1)
-    if show_reset_button:
-        kb.add(InlineKeyboardButton("⚠️ إعادة ضبط مفاتيح API", callback_data="settings_reset_api_keys"))
-    
     kb.add(
         InlineKeyboardButton("1️⃣ إعدادات التداول", callback_data="menu_settings"),
         InlineKeyboardButton("2️⃣ ابدأ الاستثمار", callback_data="menu_start_invest"),
@@ -189,10 +186,6 @@ def get_main_menu_keyboard(is_admin=False, show_reset_button=False):
 
 def get_settings_keyboard(user: User):
     kb = InlineKeyboardMarkup(row_width=2)
-    # Add a reset button if API keys are corrupted
-    if not user.is_api_keys_valid():
-        kb.add(InlineKeyboardButton("⚠️ إعادة ضبط مفاتيح API", callback_data="settings_reset_api_keys"))
-
     kb.add(
         InlineKeyboardButton("ربط/تعديل مفاتيح API", callback_data="settings_api_keys"),
         InlineKeyboardButton("تحديد مبلغ الاستثمار", callback_data="settings_investment_amount"),
@@ -225,20 +218,27 @@ async def start_handler(message: types.Message):
             user = User(telegram_id=message.from_user.id)
             db.add(user)
             db.commit()
-        
+            
         # Check for corrupted API keys on start and offer a direct reset
-        show_reset = not user.is_api_keys_valid()
-        
-    await message.answer("أهلاً بك في بوت المراجحة، اختر من القائمة:", reply_markup=get_main_menu_keyboard(show_reset_button=show_reset))
+        if not user.is_api_keys_valid():
+            user.set_api_keys = {}
+            db.commit()
+            await message.answer("⚠️ تم إعادة ضبط مفاتيح API تلقائيًا بسبب وجود خطأ في البيانات. يرجى ربط المفاتيح مرة أخرى.")
+
+    await message.answer("أهلاً بك في بوت المراجحة، اختر من القائمة:", reply_markup=get_main_menu_keyboard())
+
 
 @dp.callback_query_handler(lambda c: c.data == "main_menu")
 async def back_to_main(call: types.CallbackQuery):
     await call.answer()
     with SessionLocal() as db:
         user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
-        # Check for corrupted API keys on menu return and offer a direct reset
-        show_reset = not user.is_api_keys_valid()
-    await call.message.edit_text("القائمة الرئيسية:", reply_markup=get_main_menu_keyboard(show_reset_button=show_reset))
+        # Check for corrupted API keys on menu return
+        if not user.is_api_keys_valid():
+            user.set_api_keys = {}
+            db.commit()
+            await call.message.answer("⚠️ تم إعادة ضبط مفاتيح API تلقائيًا بسبب وجود خطأ في البيانات. يرجى ربط المفاتيح مرة أخرى.")
+    await call.message.edit_text("القائمة الرئيسية:", reply_markup=get_main_menu_keyboard())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_settings")
