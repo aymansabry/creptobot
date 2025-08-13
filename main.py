@@ -1,6 +1,5 @@
 import os
 import asyncio
-import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -15,17 +14,17 @@ from sqlalchemy import (
     create_engine,
     Column,
     Integer,
-    BigInteger,
     String,
     Float,
     DateTime,
     Boolean,
     ForeignKey,
     UniqueConstraint,
+    BigInteger,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
-import ccxt  # يدعم معظم المنصات من واجهة واحدة
+import ccxt
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,27 +40,25 @@ Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
-# المستخدم: معرف تيليجرام + إعدادات عامة
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, index=True)
     investment_amount = Column(Float, default=0.0)
     investment_status = Column(String(20), default="stopped")  # started/stopped
-    base_quote = Column(String(20), default="BTC/USDT")  # الزوج الافتراضي
-    fee_consent = Column(Boolean, default=False)  # موافقة الرسوم للجلسة الحالية
+    base_quote = Column(String(20), default="BTC/USDT")
+    fee_consent = Column(Boolean, default=False)
 
     exchanges = relationship("ExchangeCredential", back_populates="user", cascade="all, delete-orphan")
 
-# بيانات اعتماد كل منصة للمستخدم (منصة واحدة = سطر واحد)
 class ExchangeCredential(Base):
     __tablename__ = "exchange_credentials"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    exchange_id = Column(String(50))  # مثل: binance, kucoin, okx, bybit, kraken, coinbase
+    exchange_id = Column(String(50))
     api_key = Column(String(256), nullable=True)
     secret = Column(String(256), nullable=True)
-    password = Column(String(256), nullable=True)  # لبعض المنصات مثل kucoin passphrase/okx password
+    password = Column(String(256), nullable=True)
     active = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="exchanges")
@@ -70,33 +67,30 @@ class ExchangeCredential(Base):
         UniqueConstraint("user_id", "exchange_id", name="uq_user_exchange"),
     )
 
-# سجل الصفقات مع تفاصيل أوسع
 class TradeLog(Base):
     __tablename__ = "trade_logs"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, index=True)
     leg_buy_exchange = Column(String(50))
     leg_sell_exchange = Column(String(50))
-    symbol = Column(String(20))  # مثل BTC/USDT
+    symbol = Column(String(20))
     amount = Column(Float)
-    entry_price = Column(Float)  # سعر الشراء
-    exit_price = Column(Float)   # سعر البيع
-    gross_profit = Column(Float) # الربح قبل الرسوم
-    fees_total = Column(Float)   # إجمالي الرسوم (الجانبين)
-    net_profit = Column(Float)   # بعد الرسوم
+    entry_price = Column(Float)
+    exit_price = Column(Float)
+    gross_profit = Column(Float)
+    fees_total = Column(Float)
+    net_profit = Column(Float)
     note = Column(String(255), default="")
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 Base.metadata.create_all(engine)
 
-# ----------------------- BOT CORE -----------------------
+# ----------------------- BOT -----------------------
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# ----------------------- CONSTANTS -----------------------
 SUPPORTED_EXCHANGES: Dict[str, str] = {
-    # ccxt id : اسم معروض
     "binance": "Binance",
     "kucoin": "KuCoin",
     "okx": "OKX",
@@ -105,14 +99,12 @@ SUPPORTED_EXCHANGES: Dict[str, str] = {
     "coinbase": "Coinbase Advanced",
 }
 
-# أزواج افتراضية موسعة لزيادة فرص المراجحة
 DEFAULT_SYMBOLS: List[str] = [
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
     "ADA/USDT", "DOGE/USDT", "TON/USDT", "LTC/USDT", "TRX/USDT",
     "AVAX/USDT", "LINK/USDT",
 ]
 
-# ----------------------- FSM -----------------------
 class Form(StatesGroup):
     choose_exchange = State()
     waiting_api_key = State()
@@ -161,13 +153,7 @@ def build_ccxt_instance(cred: ExchangeCredential):
 async def verify_keys(exchange_id: str, api_key: str, secret: str, password: Optional[str]) -> bool:
     try:
         cls = getattr(ccxt, exchange_id)
-        ex = cls({
-            "apiKey": api_key,
-            "secret": secret,
-            "password": password,
-            "enableRateLimit": True,
-        })
-        # محاولة جلب الحساب للتأكد من الصلاحيات
+        ex = cls({"apiKey": api_key, "secret": secret, "password": password, "enableRateLimit": True})
         await asyncio.to_thread(ex.load_markets)
         bal = await asyncio.to_thread(ex.fetch_balance)
         return bal is not None
@@ -176,9 +162,8 @@ async def verify_keys(exchange_id: str, api_key: str, secret: str, password: Opt
         return False
 
 async def fetch_best_prices(active_creds: List[ExchangeCredential], symbol: str) -> Tuple[Optional[Tuple[str, float]], Optional[Tuple[str, float]]]:
-    """ترجع أرخص سوق شراء (أفضل سعر ask) وأغلى سوق بيع (أفضل سعر bid)."""
-    best_buy = None  # (exchange_id, ask)
-    best_sell = None # (exchange_id, bid)
+    best_buy = None
+    best_sell = None
     for cred in active_creds:
         try:
             ex = build_ccxt_instance(cred)
@@ -195,22 +180,20 @@ async def fetch_best_prices(active_creds: List[ExchangeCredential], symbol: str)
     return best_buy, best_sell
 
 async def estimate_fees(cred_buy: ExchangeCredential, cred_sell: ExchangeCredential, symbol: str, amount: float) -> float:
-    """تقدير سريع للرسوم كنسبة taker (إن لم تتوفر نستخدم 0.1%)."""
     total = 0.0
     for cred, side in [(cred_buy, "buy"), (cred_sell, "sell")]:
         try:
             ex = build_ccxt_instance(cred)
             markets = await asyncio.to_thread(ex.load_markets)
             m = markets.get(symbol, {})
-            taker = m.get("taker", 0.001)  # 0.1% افتراض
-            # قيمة الصفقة = السعر التقريبي × الكمية، سنستبدل السعر لاحقًا بقيم حقيقية
-            # هنا نُبقي الرسوم نسبة فقط ونطبّقها لاحقًا على قيمة الرجلين
+            taker = m.get("taker", 0.001)
             total += taker
         except Exception:
             total += 0.001
-    return total  # مجموع النسب (تقريب)
+    return total
 
 # ----------------------- HANDLERS -----------------------
+
 @dp.message_handler(commands=["start"])
 async def start_handler(message: types.Message):
     db = SessionLocal()
@@ -226,6 +209,7 @@ async def start_handler(message: types.Message):
 async def back_to_main(call: types.CallbackQuery):
     await call.answer()
     await call.message.edit_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard())
+
 
 # ---- إدارة بيانات التداول (إضافة/تعديل/تفعيل منصات) ----
 @dp.callback_query_handler(lambda c: c.data == "menu_edit_trading_data")
