@@ -201,7 +201,7 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
         'amount': max_amount,
         'profit_percent': profit_percent
     }
-    async def execute_trade(user: User, opportunity: Dict):
+async def execute_trade(user: User, opportunity: Dict):
     """تنفيذ صفقة المراجحة مع معالجة محسنة للأخطاء"""
     db = SessionLocal()
     try:
