@@ -201,7 +201,7 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
         'amount': max_amount,
         'profit_percent': profit_percent
     }
-async def execute_trade(user: User, opportunity: Dict):
+    async def execute_trade(user: User, opportunity: Dict):
     """تنفيذ صفقة المراجحة مع معالجة محسنة للأخطاء"""
     db = SessionLocal()
     try:
@@ -317,7 +317,8 @@ async def withdraw_profit(user: User, amount: float):
             f"❌ فشل السحب التلقائي: {str(e)}\n"
             "الرجاء التحقق من إعدادات المحفظة"
         )
-async def run_arbitrage(user_id: int):
+        return False
+        async def run_arbitrage(user_id: int):
     """الحلقة الرئيسية للمراجحة الآلية مع تحسينات معالجة الأخطاء"""
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=user_id).first()
@@ -384,52 +385,68 @@ async def run_arbitrage(user_id: int):
     
     db.close()
     @dp.message_handler(commands=['start', 'help'])
-
 async def cmd_start(message: types.Message):
-    """معالجة أمر البدء والمساعدة"""
     db = SessionLocal()
-    try:
-        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if not user:
-            user = User(telegram_id=message.from_user.id)
-            db.add(user)
-            db.commit()
-        
-        welcome_msg = (
-            "مرحباً بك في بوت المراجحة الآلية بين المنصات!\n"
-            "يمكنك من خلال هذا البوت:\n"
-            "- ربط حسابات التداول الخاصة بك\n"
-            "- تحديد مبلغ الاستثمار\n"
-            "- بدء التداول الآلي\n"
-            "- متابعة الأرباح والإحصائيات"
-        )
-        
-        menu_msg = (
-            f"حالة التداول: {'🟢 قيد التشغيل' if user.investment_status == 'started' else '🔴 متوقف'}\n"
-            f"رصيد الاستثمار: {user.investment_amount:.2f} USDT\n"
-            f"نسبة الربح الأدنى: {user.min_profit_percent:.2f}%"
-        )
-        
-        kb = InlineKeyboardMarkup(row_width=2)
-        buttons = [
-            ("🔐 إدارة المنصات", "menu_exchanges"),
-            ("💰 إعدادات الاستثمار", "menu_investment"),
-            ("📈 بدء/إيقاف التداول", "menu_toggle_trading"),
-            ("📊 كشف الحساب", "menu_report"),
-            ("⚙️ الإعدادات", "menu_settings")
-        ]
-        for text, callback in buttons:
-            kb.add(InlineKeyboardButton(text, callback_data=callback))
-        
-        await message.answer(welcome_msg)
-        await message.answer(menu_msg, reply_markup=kb)
+    user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+    if not user:
+        user = User(telegram_id=message.from_user.id)
+        db.add(user)
+        db.commit()
     
-    except Exception as e:
-        logging.error(f"خطأ في معالجة أمر البدء: {str(e)}")
-        await message.answer("حدث خطأ في معالجة طلبك. الرجاء المحاولة لاحقاً.")
+    welcome_msg = (
+        "مرحباً بك في بوت المراجحة الآلية بين المنصات!\n"
+        "يمكنك من خلال هذا البوت:\n"
+        "- ربط حسابات التداول الخاصة بك\n"
+        "- تحديد مبلغ الاستثمار\n"
+        "- بدء التداول الآلي\n"
+        "- متابعة الأرباح والإحصائيات"
+    )
     
-    finally:
-        db.close()
+    menu_msg = (
+        f"حالة التداول: {'🟢 قيد التشغيل' if user.investment_status == 'started' else '🔴 متوقف'}\n"
+        f"رصيد الاستثمار: {user.investment_amount:.2f} USDT\n"
+        f"نسبة الربح الأدنى: {user.min_profit_percent:.2f}%"
+    )
+    
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [
+        ("🔐 إدارة المنصات", "menu_exchanges"),
+        ("💰 إعدادات الاستثمار", "menu_investment"),
+        ("📈 بدء/إيقاف التداول", "menu_toggle_trading"),
+        ("📊 كشف الحساب", "menu_report"),
+        ("⚙️ الإعدادات", "menu_settings")
+    ]
+    for text, callback in buttons:
+        kb.add(InlineKeyboardButton(text, callback_data=callback))
+    
+    await message.answer(welcome_msg)
+    await message.answer(menu_msg, reply_markup=kb)
+    db.close()
+
+@dp.callback_query_handler(lambda c: c.data == 'main_menu')
+async def back_to_main(call: types.CallbackQuery):
+    db = SessionLocal()
+    user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
+    
+    menu_msg = (
+        f"حالة التداول: {'🟢 قيد التشغيل' if user.investment_status == 'started' else '🔴 متوقف'}\n"
+        f"رصيد الاستثمار: {user.investment_amount:.2f} USDT\n"
+        f"نسبة الربح الأدنى: {user.min_profit_percent:.2f}%"
+    )
+    
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [
+        ("🔐 إدارة المنصات", "menu_exchanges"),
+        ("💰 إعدادات الاستثمار", "menu_investment"),
+        ("📈 بدء/إيقاف التداول", "menu_toggle_trading"),
+        ("📊 كشف الحساب", "menu_report"),
+        ("⚙️ الإعدادات", "menu_settings")
+    ]
+    for text, callback in buttons:
+        kb.add(InlineKeyboardButton(text, callback_data=callback))
+    
+    await call.message.edit_text(menu_msg, reply_markup=kb)
+    db.close()
     async def on_startup(dp):
     await bot.set_my_commands([
         types.BotCommand("start", "بدء استخدام البوت"),
@@ -447,4 +464,3 @@ async def cmd_start(message: types.Message):
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-    
