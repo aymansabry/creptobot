@@ -27,7 +27,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import ccxt
 
-# ----------------------- الإعدادات الأساسية -----------------------
+# الإعدادات الأساسية
 logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///arbitrage.db")
@@ -35,8 +35,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 if not BOT_TOKEN:
     raise ValueError("يجب تعيين متغير البيئة BOT_TOKEN")
-
-# ----------------------- تشفير البيانات -----------------------
+    # نظام التشفير
 class CryptoManager:
     def __init__(self):
         self.cipher_suite = Fernet(ENCRYPTION_KEY.encode())
@@ -49,7 +48,7 @@ class CryptoManager:
 
 crypto_manager = CryptoManager()
 
-# ----------------------- قاعدة البيانات -----------------------
+# نماذج قاعدة البيانات
 Base = declarative_base()
 
 class User(Base):
@@ -92,16 +91,16 @@ class TradeLog(Base):
     status = Column(String(20))
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+# إعدادات قاعدة البيانات
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 Base.metadata.create_all(engine)
-
-# ----------------------- إعداد البوت -----------------------
+# إعداد البوت
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# ----------------------- حالات المحادثة -----------------------
+# حالات المحادثة
 class Form(StatesGroup):
     waiting_api_key = State()
     waiting_secret = State()
@@ -109,15 +108,13 @@ class Form(StatesGroup):
     waiting_investment = State()
     waiting_wallet = State()
 
-# ----------------------- المنصات المدعومة -----------------------
+# المنصات المدعومة
 SUPPORTED_EXCHANGES = {
     "binance": "Binance",
     "kucoin": "KuCoin",
     "okx": "OKX",
     "bybit": "Bybit"
 }
-
-# ----------------------- دوال المراجحة -----------------------
 async def get_exchange_instance(cred: ExchangeCredential) -> ccxt.Exchange:
     """إنشاء وتجهيز مثيل منصة تداول"""
     exchange = getattr(ccxt, cred.exchange_id)({
@@ -125,36 +122,57 @@ async def get_exchange_instance(cred: ExchangeCredential) -> ccxt.Exchange:
         'secret': crypto_manager.decrypt(cred.encrypted_secret),
         'password': crypto_manager.decrypt(cred.encrypted_password) if cred.encrypted_password else None,
         'enableRateLimit': True,
-        'options': {'defaultType': 'spot'}
+        'options': {
+            'defaultType': 'spot',
+            'adjustForTimeDifference': True
+        }
     })
     await asyncio.to_thread(exchange.load_markets)
     return exchange
 
-async def analyze_market(exchanges: List[ccxt.Exchange], symbol: str) -> Dict:
-    """تحليل السوق لزوج تداول معين"""
+async def analyze_market(exchanges: List[ccxt.Exchange], symbol: str) -> List[Dict]:
+    """تحليل السوق لزوج تداول معين مع معالجة الأخطاء"""
     prices = []
     for exchange in exchanges:
         try:
             ticker = await asyncio.to_thread(exchange.fetch_ticker, symbol)
+            
+            # معالجة القيم الفارغة
+            bid = float(ticker['bid']) if ticker['bid'] is not None else 0
+            ask = float(ticker['ask']) if ticker['ask'] is not None else 0
+            bid_volume = float(ticker['bidVolume']) if ticker['bidVolume'] is not None else 0
+            ask_volume = float(ticker['askVolume']) if ticker['askVolume'] is not None else 0
+            
+            # تجاهل الأسعار غير الصالحة
+            if bid <= 0 or ask <= 0:
+                continue
+                
             prices.append({
                 'exchange': exchange,
-                'bid': float(ticker['bid']),
-                'ask': float(ticker['ask']),
-                'bid_volume': float(ticker['bidVolume']),
-                'ask_volume': float(ticker['askVolume'])
+                'symbol': symbol,
+                'bid': bid,
+                'ask': ask,
+                'bid_volume': bid_volume,
+                'ask_volume': ask_volume
             })
         except Exception as e:
-            logging.warning(f"فشل في الحصول على الأسعار من {exchange.id}: {e}")
+            logging.warning(f"فشل في الحصول على الأسعار من {exchange.id}: {str(e)}")
             continue
     return prices
 
 async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float, min_profit: float) -> Optional[Dict]:
-    """حساب فرص المراجحة المتاحة"""
+    """حساب فرص المراجحة المتاحة مع تحسينات الأمان"""
     if len(prices) < 2:
         return None
     
-    best_buy = min(prices, key=lambda x: x['ask'])
-    best_sell = max(prices, key=lambda x: x['bid'])
+    # فلترة الأسعار غير الصالحة
+    valid_prices = [p for p in prices if p['bid'] > 0 and p['ask'] > 0]
+    
+    if len(valid_prices) < 2:
+        return None
+    
+    best_buy = min(valid_prices, key=lambda x: x['ask'])
+    best_sell = max(valid_prices, key=lambda x: x['bid'])
     
     if best_buy['exchange'].id == best_sell['exchange'].id:
         return None
@@ -175,7 +193,7 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
         return None
     
     return {
-        'symbol': prices[0]['symbol'],
+        'symbol': best_buy['symbol'],
         'buy_exchange': best_buy['exchange'],
         'sell_exchange': best_sell['exchange'],
         'buy_price': best_buy['ask'],
@@ -183,9 +201,8 @@ async def calculate_arbitrage_opportunity(prices: List[Dict], investment: float,
         'amount': max_amount,
         'profit_percent': profit_percent
     }
-
-async def execute_trade(user: User, opportunity: Dict):
-    """تنفيذ صفقة المراجحة"""
+    async def execute_trade(user: User, opportunity: Dict):
+    """تنفيذ صفقة المراجحة مع معالجة محسنة للأخطاء"""
     db = SessionLocal()
     try:
         # تنفيذ أمر الشراء
@@ -222,54 +239,48 @@ async def execute_trade(user: User, opportunity: Dict):
         db.commit()
         
         # إرسال إشعار للمستخدم
-        await notify_trade_result(user, opportunity, buy_order, sell_order, actual_profit, actual_profit_percent)
+        profit_emoji = "🟢" if actual_profit > 0 else "🔴"
+        message = (
+            f"{profit_emoji} **تم تنفيذ صفقة مراجحة**\n"
+            f"▫️ الزوج: {opportunity['symbol']}\n"
+            f"▫️ الكمية: {buy_order['filled']:.6f}\n"
+            f"▫️ سعر الشراء: {buy_order['price']:.4f} ({opportunity['buy_exchange'].id})\n"
+            f"▫️ سعر البيع: {sell_order['price']:.4f} ({opportunity['sell_exchange'].id})\n"
+            f"▫️ صافي الربح: {actual_profit:.4f} USDT ({actual_profit_percent:.2f}%)\n"
+            f"▫️ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+        await bot.send_message(user.telegram_id, message, parse_mode="Markdown")
         
         # السحب التلقائي إذا كان مفعلاً
         if user.auto_withdraw and actual_profit > 1:
             await withdraw_profit(user, actual_profit)
             
     except Exception as e:
-        logging.error(f"فشل تنفيذ الصفقة: {e}")
-        await handle_trade_error(user, opportunity, e, db)
+        logging.error(f"فشل تنفيذ الصفقة: {str(e)}")
+        error_msg = f"❌ فشل تنفيذ الصفقة: {str(e)}"
+        
+        # تسجيل الصفقة الفاشلة
+        trade = TradeLog(
+            user_id=user.id,
+            symbol=opportunity['symbol'],
+            amount=opportunity['amount'],
+            entry_price=opportunity['buy_price'],
+            exit_price=0,
+            profit_percent=0,
+            net_profit=0,
+            status='failed',
+            timestamp=datetime.now(),
+            note=str(e)
+        )
+        db.add(trade)
+        db.commit()
+        error_msg += f"\n\nتم إلغاء الصفقة وحفظ التفاصيل"
+        await bot.send_message(user.telegram_id, error_msg)
     finally:
         db.close()
 
-async def notify_trade_result(user: User, opportunity: Dict, buy_order: Dict, sell_order: Dict, profit: float, profit_percent: float):
-    """إرسال إشعار بنتيجة الصفقة"""
-    profit_emoji = "🟢" if profit > 0 else "🔴"
-    message = (
-        f"{profit_emoji} **تم تنفيذ صفقة مراجحة**\n"
-        f"▫️ الزوج: {opportunity['symbol']}\n"
-        f"▫️ الكمية: {buy_order['filled']:.6f}\n"
-        f"▫️ سعر الشراء: {buy_order['price']:.4f} ({opportunity['buy_exchange'].id})\n"
-        f"▫️ سعر البيع: {sell_order['price']:.4f} ({opportunity['sell_exchange'].id})\n"
-        f"▫️ صافي الربح: {profit:.4f} USDT ({profit_percent:.2f}%)\n"
-        f"▫️ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    )
-    await bot.send_message(user.telegram_id, message, parse_mode="Markdown")
-
-async def handle_trade_error(user: User, opportunity: Dict, error: Exception, db):
-    """معالجة أخطاء الصفقات"""
-    error_msg = f"❌ فشل تنفيذ الصفقة: {str(error)}"
-    trade = TradeLog(
-        user_id=user.id,
-        symbol=opportunity['symbol'],
-        amount=opportunity['amount'],
-        entry_price=opportunity['buy_price'],
-        exit_price=0,
-        profit_percent=0,
-        net_profit=0,
-        status='failed',
-        timestamp=datetime.now(),
-        note=str(error)
-    )
-    db.add(trade)
-    db.commit()
-    error_msg += f"\n\nتم إلغاء الصفقة وحفظ التفاصيل"
-    await bot.send_message(user.telegram_id, error_msg)
-
 async def withdraw_profit(user: User, amount: float):
-    """سحب الأرباح تلقائياً"""
+    """سحب الأرباح تلقائياً مع معالجة الأخطاء"""
     if not user.wallet_address:
         await bot.send_message(
             user.telegram_id,
@@ -300,16 +311,15 @@ async def withdraw_profit(user: User, amount: float):
         )
         return True
     except Exception as e:
-        logging.error(f"فشل السحب التلقائي: {e}")
+        logging.error(f"فشل السحب التلقائي: {str(e)}")
         await bot.send_message(
             user.telegram_id,
             f"❌ فشل السحب التلقائي: {str(e)}\n"
             "الرجاء التحقق من إعدادات المحفظة"
         )
         return False
-
-async def run_arbitrage(user_id: int):
-    """الحلقة الرئيسية للمراجحة الآلية"""
+        async def run_arbitrage(user_id: int):
+    """الحلقة الرئيسية للمراجحة الآلية مع تحسينات معالجة الأخطاء"""
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=user_id).first()
     
@@ -331,7 +341,7 @@ async def run_arbitrage(user_id: int):
                     exchange = await get_exchange_instance(cred)
                     exchanges.append(exchange)
                 except Exception as e:
-                    logging.error(f"فشل تهيئة {cred.exchange_id}: {e}")
+                    logging.error(f"فشل تهيئة {cred.exchange_id}: {str(e)}")
                     continue
             
             if len(exchanges) < 2:
@@ -352,7 +362,7 @@ async def run_arbitrage(user_id: int):
                     if opportunity:
                         opportunities.append(opportunity)
                 except Exception as e:
-                    logging.error(f"خطأ في تحليل {symbol}: {e}")
+                    logging.error(f"خطأ في تحليل {symbol}: {str(e)}")
                     continue
             
             if not opportunities:
@@ -367,16 +377,14 @@ async def run_arbitrage(user_id: int):
             await asyncio.sleep(20)
             
         except Exception as e:
-            logging.error(f"خطأ في حلقة المراجحة: {e}")
+            logging.error(f"خطأ في حلقة المراجحة: {str(e)}")
             await bot.send_message(user_id, f"⚠️ حدث خطأ في عملية المراجحة: {str(e)}")
             await asyncio.sleep(60)
         finally:
             db.refresh(user)
     
     db.close()
-
-# ----------------------- معالجات الأوامر -----------------------
-@dp.message_handler(commands=['start', 'help'])
+    @dp.message_handler(commands=['start', 'help'])
 async def cmd_start(message: types.Message):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
@@ -439,11 +447,7 @@ async def back_to_main(call: types.CallbackQuery):
     
     await call.message.edit_text(menu_msg, reply_markup=kb)
     db.close()
-
-# ... (يتم إضافة بقية معالجات الأوامر هنا بنفس النمط)
-
-# ----------------------- تشغيل البوت -----------------------
-async def on_startup(dp):
+    async def on_startup(dp):
     await bot.set_my_commands([
         types.BotCommand("start", "بدء استخدام البوت"),
         types.BotCommand("status", "حالة التداول الحالية"),
@@ -460,3 +464,4 @@ async def on_startup(dp):
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    
