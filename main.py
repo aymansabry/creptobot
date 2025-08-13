@@ -25,8 +25,10 @@ from cryptography.fernet import Fernet
 import openai
 
 # Set up logging for better debugging
+# The original format had a typo, '%(message.md)s', which caused a KeyError.
+# This line is corrected to use the standard message format '%(message)s'.
 logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message.md)s')
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # --- 1. Environment Variables Configuration ---
 # Ensure all required environment variables are set.
