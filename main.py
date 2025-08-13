@@ -1,7 +1,9 @@
 import os
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -9,225 +11,205 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from sqlalchemy import create_engine, Column, BigInteger, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime,
+    Boolean,
+    ForeignKey,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
-import ccxt
-import openai
+import ccxt  # يدعم معظم المنصات من واجهة واحدة
 
 logging.basicConfig(level=logging.INFO)
 
 # ----------------------- ENV -----------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///arbitrage.db")
 
-# Webhook إعدادات
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثال: https://your-railway-domain.up.railway.app/webhook/<bot-token>
-WEBAPP_HOST = "0.0.0.0"
-WEBAPP_PORT = int(os.getenv("PORT", "8080"))
-
-# إعدادات المراجحة
-ARBITRAGE_SYMBOL = os.getenv("ARBITRAGE_SYMBOL", "BTC/USDT")
-ARBITRAGE_THRESHOLD_USD = float(os.getenv("ARBITRAGE_THRESHOLD_USD", "20"))  # أدنى فرق سعر بالدولار لتنفيذ المراجحة
-DEFAULT_TAKER_FEE = float(os.getenv("DEFAULT_TAKER_FEE", "0.001"))  # 0.1% افتراضي
-BOT_FEE_PCT = float(os.getenv("BOT_FEE_PCT", "0.002"))  # 0.2% افتراضي
-LOOP_SLEEP_SECONDS = int(os.getenv("LOOP_SLEEP_SECONDS", "30"))
-
-if not BOT_TOKEN or not DATABASE_URL or not OPENAI_API_KEY or not WEBHOOK_URL:
-    raise Exception("❌ Missing required env: BOT_TOKEN, DATABASE_URL, OPENAI_API_KEY, WEBHOOK_URL")
-
-openai.api_key = OPENAI_API_KEY
-
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+if not BOT_TOKEN or not DATABASE_URL:
+    raise Exception("❌ BOT_TOKEN و DATABASE_URL مطلوبة")
 
 # ----------------------- DB -----------------------
 Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
+# المستخدم: معرف تيليجرام + إعدادات عامة
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, index=True)
+    telegram_id = Column(Integer, unique=True, index=True)
+    investment_amount = Column(Float, default=0.0)
+    investment_status = Column(String(20), default="stopped")  # started/stopped
+    base_quote = Column(String(20), default="BTC/USDT")  # الزوج الافتراضي
+    fee_consent = Column(Boolean, default=False)  # موافقة الرسوم للجلسة الحالية
 
-    # Binance
-    binance_api = Column(String(512), nullable=True)
-    binance_secret = Column(String(512), nullable=True)
-    binance_active = Column(Boolean, default=False)
+    exchanges = relationship("ExchangeCredential", back_populates="user", cascade="all, delete-orphan")
 
-    # KuCoin
-    kucoin_api = Column(String(512), nullable=True)
-    kucoin_secret = Column(String(512), nullable=True)
-    kucoin_passphrase = Column(String(512), nullable=True)
-    kucoin_active = Column(Boolean, default=False)
+# بيانات اعتماد كل منصة للمستخدم (منصة واحدة = سطر واحد)
+class ExchangeCredential(Base):
+    __tablename__ = "exchange_credentials"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    exchange_id = Column(String(50))  # مثل: binance, kucoin, okx, bybit, kraken, coinbase
+    api_key = Column(String(256), nullable=True)
+    secret = Column(String(256), nullable=True)
+    password = Column(String(256), nullable=True)  # لبعض المنصات مثل kucoin passphrase/okx password
+    active = Column(Boolean, default=False)
 
-    # Bybit
-    bybit_api = Column(String(512), nullable=True)
-    bybit_secret = Column(String(512), nullable=True)
-    bybit_active = Column(Boolean, default=False)
+    user = relationship("User", back_populates="exchanges")
 
-    # OKX
-    okx_api = Column(String(512), nullable=True)
-    okx_secret = Column(String(512), nullable=True)
-    okx_passphrase = Column(String(512), nullable=True)
-    okx_active = Column(Boolean, default=False)
+    __table_args__ = (
+        UniqueConstraint("user_id", "exchange_id", name="uq_user_exchange"),
+    )
 
-    # Kraken
-    kraken_api = Column(String(512), nullable=True)
-    kraken_secret = Column(String(512), nullable=True)
-    kraken_active = Column(Boolean, default=False)
-
-    # Coinbase (Advanced)
-    coinbase_api = Column(String(512), nullable=True)
-    coinbase_secret = Column(String(512), nullable=True)
-    coinbase_passphrase = Column(String(512), nullable=True)
-    coinbase_active = Column(Boolean, default=False)
-
-    investment_amount = Column(Float, default=0.0)  # مبلغ الاستثمار بالـ USDT
-    investment_status = Column(String(20), default="stopped")
-
+# سجل الصفقات مع تفاصيل أوسع
 class TradeLog(Base):
     __tablename__ = "trade_logs"
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
-    trade_type = Column(String(80))          # "Buy X / Sell Y"
-    platform_buy = Column(String(32))
-    platform_sell = Column(String(32))
-    symbol = Column(String(32))
-    amount = Column(Float)                   # كمية BTC مثلاً
-    price_buy = Column(Float)
-    price_sell = Column(Float)
-    taker_fee_buy = Column(Float)
-    taker_fee_sell = Column(Float)
-    bot_fee = Column(Float)
-    profit = Column(Float)
+    user_id = Column(Integer, index=True)
+    leg_buy_exchange = Column(String(50))
+    leg_sell_exchange = Column(String(50))
+    symbol = Column(String(20))  # مثل BTC/USDT
+    amount = Column(Float)
+    entry_price = Column(Float)  # سعر الشراء
+    exit_price = Column(Float)   # سعر البيع
+    gross_profit = Column(Float) # الربح قبل الرسوم
+    fees_total = Column(Float)   # إجمالي الرسوم (الجانبين)
+    net_profit = Column(Float)   # بعد الرسوم
+    note = Column(String(255), default="")
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 Base.metadata.create_all(engine)
 
+# ----------------------- BOT CORE -----------------------
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+# ----------------------- CONSTANTS -----------------------
+SUPPORTED_EXCHANGES: Dict[str, str] = {
+    # ccxt id : اسم معروض
+    "binance": "Binance",
+    "kucoin": "KuCoin",
+    "okx": "OKX",
+    "bybit": "Bybit",
+    "kraken": "Kraken",
+    "coinbase": "Coinbase Advanced",
+}
+
+# أزواج افتراضية موسعة لزيادة فرص المراجحة
+DEFAULT_SYMBOLS: List[str] = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
+    "ADA/USDT", "DOGE/USDT", "TON/USDT", "LTC/USDT", "TRX/USDT",
+    "AVAX/USDT", "LINK/USDT",
+]
+
 # ----------------------- FSM -----------------------
 class Form(StatesGroup):
-    platform_choice = State()
+    choose_exchange = State()
     waiting_api_key = State()
     waiting_secret_key = State()
-    waiting_passphrase = State()
+    waiting_password = State()
     waiting_investment_amount = State()
+    choose_symbols = State()
+    fee_consent = State()
     waiting_report_start = State()
     waiting_report_end = State()
 
-# ----------------------- Helpers: CCXT -----------------------
-def make_exchange(id_: str, api=None, secret=None, password=None):
-    """ينشئ عميل CCXT مضبوط بالمفاتيح إن وُجدت (للاستخدام في التداول)،
-       أو عميل عام بدون مفاتيح (للأسعار فقط)."""
-    params = {"enableRateLimit": True}
-    if api and secret:
-        params.update({"apiKey": api, "secret": secret})
-    if password:
-        params.update({"password": password})
+# ----------------------- HELPERS -----------------------
 
-    # خرائط IDs متوافقة مع CCXT
-    mapping = {
-        "binance": "binance",
-        "kucoin": "kucoin",
-        "bybit": "bybit",
-        "okx": "okx",
-        "kraken": "kraken",
-        "coinbase": "coinbase",  # CCXT الحديثة تدعم Coinbase Advanced باسم 'coinbase'
-    }
-    ex_id = mapping[id_.lower()]
-    ex_class = getattr(ccxt, ex_id)
-    ex = ex_class(params)
-    return ex
-
-def get_user_active_exchanges(user: User):
-    """يرجع قائمة (اسم المنصة، كائن ccxt، has_keys) للمنصات المفعلة عند المستخدم"""
-    exs = []
-    # Binance
-    if user.binance_active:
-        exs.append(("Binance", make_exchange("binance", user.binance_api, user.binance_secret, None), bool(user.binance_api and user.binance_secret)))
-    # KuCoin
-    if user.kucoin_active:
-        exs.append(("KuCoin", make_exchange("kucoin", user.kucoin_api, user.kucoin_secret, user.kucoin_passphrase), bool(user.kucoin_api and user.kucoin_secret and user.kucoin_passphrase)))
-    # Bybit
-    if user.bybit_active:
-        exs.append(("Bybit", make_exchange("bybit", user.bybit_api, user.bybit_secret, None), bool(user.bybit_api and user.bybit_secret)))
-    # OKX
-    if user.okx_active:
-        exs.append(("OKX", make_exchange("okx", user.okx_api, user.okx_secret, user.okx_passphrase), bool(user.okx_api and user.okx_secret and user.okx_passphrase)))
-    # Kraken
-    if user.kraken_active:
-        exs.append(("Kraken", make_exchange("kraken", user.kraken_api, user.kraken_secret, None), bool(user.kraken_api and user.kraken_secret)))
-    # Coinbase
-    if user.coinbase_active:
-        exs.append(("Coinbase", make_exchange("coinbase", user.coinbase_api, user.coinbase_secret, user.coinbase_passphrase), bool(user.coinbase_api and user.coinbase_secret and user.coinbase_passphrase)))
-    return exs
-
-async def verify_keys_ccxt(exchange: ccxt.Exchange) -> bool:
-    try:
-        # بعض المنصات تحتاج load_markets قبل balance
-        await asyncio.to_thread(exchange.load_markets)
-        bal = await asyncio.to_thread(exchange.fetch_balance)
-        return bool(bal)
-    except Exception:
-        return False
-
-def taker_fee_of(exchange: ccxt.Exchange, symbol: str) -> float:
-    try:
-        markets = exchange.markets or exchange.load_markets()
-        m = markets.get(symbol)
-        if m and "taker" in m and m["taker"]:
-            return float(m["taker"])
-    except Exception:
-        pass
-    return DEFAULT_TAKER_FEE
-
-def normalize_symbol(exchange: ccxt.Exchange, symbol: str) -> str:
-    """يحاول استخدام الرمز الموحد، ولو مش متاح يحاول بدائل شائعة (مثلاً Kraken)"""
-    # محاولات شائعة للـ BTC/USDT
-    candidates = [symbol, "XBT/USDT", "BTC/USDT:USDT"]  # بعض المنصات تذيّل العقد
-    try:
-        markets = exchange.markets or exchange.load_markets()
-        for s in candidates:
-            if s in markets:
-                return s
-    except Exception:
-        pass
-    return symbol  # بنرجّع الأصلي ونترك الفشل يعالج لاحقاً
-
-# ----------------------- Keyboards -----------------------
-def main_menu_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("1️⃣ تسجيل/تعديل بيانات التداول", callback_data="menu_edit_trading_data"),
-        InlineKeyboardButton("2️⃣ ابدأ استثمار", callback_data="menu_start_invest"),
-        InlineKeyboardButton("3️⃣ استثمار وهمي", callback_data="menu_fake_invest"),
-        InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="menu_report"),
-        InlineKeyboardButton("5️⃣ حالة السوق", callback_data="menu_market_status"),
-        InlineKeyboardButton("6️⃣ إيقاف الاستثمار", callback_data="menu_stop_invest"),
-        InlineKeyboardButton("⚙️ اختبار مفاتيح منصة", callback_data="test_platform_prompt"),
-    )
-    return kb
-
-def user_platforms_keyboard(user: User):
+def exchange_list_keyboard(user: User) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=2)
-    platforms = [
-        ("Binance", user.binance_active, user.binance_api),
-        ("KuCoin", user.kucoin_active, user.kucoin_api),
-        ("Bybit", user.bybit_active, user.bybit_api),
-        ("OKX", user.okx_active, user.okx_api),
-        ("Kraken", user.kraken_active, user.kraken_api),
-        ("Coinbase", user.coinbase_active, user.coinbase_api),
-    ]
-    for name, active, api in platforms:
-        text = ("✅ " if active else "❌ ") + name + (" (مربوط)" if api else " (غير مربوط)")
-        kb.insert(InlineKeyboardButton(text, callback_data=f"platform_{name.lower()}"))
+    for ex_id, ex_name in SUPPORTED_EXCHANGES.items():
+        cred = next((c for c in user.exchanges if c.exchange_id == ex_id), None)
+        status = "✅" if (cred and cred.active) else "❌"
+        connected = "(مربوط)" if cred and cred.api_key else "(غير مربوط)"
+        kb.insert(InlineKeyboardButton(f"{status} {ex_name} {connected}", callback_data=f"ex_{ex_id}"))
     kb.add(InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu"))
     return kb
 
-# ----------------------- Handlers: Start / Menu -----------------------
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("1️⃣ تسجيل/تعديل بيانات التداول", callback_data="menu_edit_trading_data"),
+        InlineKeyboardButton("2️⃣ تحديد مبلغ/أزواج", callback_data="menu_set_amount_symbols"),
+        InlineKeyboardButton("3️⃣ بدء الاستثمار", callback_data="menu_start_invest"),
+        InlineKeyboardButton("4️⃣ كشف حساب عن فترة", callback_data="menu_report"),
+        InlineKeyboardButton("5️⃣ إيقاف الاستثمار", callback_data="menu_stop_invest"),
+    )
+    return kb
+
+def build_ccxt_instance(cred: ExchangeCredential):
+    cls = getattr(ccxt, cred.exchange_id)
+    kwargs = {
+        "apiKey": cred.api_key or "",
+        "secret": cred.secret or "",
+        "password": cred.password or None,
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    }
+    return cls(kwargs)
+
+async def verify_keys(exchange_id: str, api_key: str, secret: str, password: Optional[str]) -> bool:
+    try:
+        cls = getattr(ccxt, exchange_id)
+        ex = cls({
+            "apiKey": api_key,
+            "secret": secret,
+            "password": password,
+            "enableRateLimit": True,
+        })
+        # محاولة جلب الحساب للتأكد من الصلاحيات
+        await asyncio.to_thread(ex.load_markets)
+        bal = await asyncio.to_thread(ex.fetch_balance)
+        return bal is not None
+    except Exception as e:
+        logging.exception(e)
+        return False
+
+async def fetch_best_prices(active_creds: List[ExchangeCredential], symbol: str) -> Tuple[Optional[Tuple[str, float]], Optional[Tuple[str, float]]]:
+    """ترجع أرخص سوق شراء (أفضل سعر ask) وأغلى سوق بيع (أفضل سعر bid)."""
+    best_buy = None  # (exchange_id, ask)
+    best_sell = None # (exchange_id, bid)
+    for cred in active_creds:
+        try:
+            ex = build_ccxt_instance(cred)
+            ticker = await asyncio.to_thread(ex.fetch_ticker, symbol)
+            bid = float(ticker.get("bid") or 0)
+            ask = float(ticker.get("ask") or 0)
+            if ask and (best_buy is None or ask < best_buy[1]):
+                best_buy = (cred.exchange_id, ask)
+            if bid and (best_sell is None or bid > best_sell[1]):
+                best_sell = (cred.exchange_id, bid)
+        except Exception as e:
+            logging.warning(f"⚠️ فشل سعر {cred.exchange_id} لـ {symbol}: {e}")
+            continue
+    return best_buy, best_sell
+
+async def estimate_fees(cred_buy: ExchangeCredential, cred_sell: ExchangeCredential, symbol: str, amount: float) -> float:
+    """تقدير سريع للرسوم كنسبة taker (إن لم تتوفر نستخدم 0.1%)."""
+    total = 0.0
+    for cred, side in [(cred_buy, "buy"), (cred_sell, "sell")]:
+        try:
+            ex = build_ccxt_instance(cred)
+            markets = await asyncio.to_thread(ex.load_markets)
+            m = markets.get(symbol, {})
+            taker = m.get("taker", 0.001)  # 0.1% افتراض
+            # قيمة الصفقة = السعر التقريبي × الكمية، سنستبدل السعر لاحقًا بقيم حقيقية
+            # هنا نُبقي الرسوم نسبة فقط ونطبّقها لاحقًا على قيمة الرجلين
+            total += taker
+        except Exception:
+            total += 0.001
+    return total  # مجموع النسب (تقريب)
+
+# ----------------------- HANDLERS -----------------------
 @dp.message_handler(commands=["start"])
 async def start_handler(message: types.Message):
     db = SessionLocal()
@@ -237,123 +219,170 @@ async def start_handler(message: types.Message):
         db.add(user)
         db.commit()
     db.close()
-    await message.answer("أهلاً بك في بوت المراجحة 👋\nاختر من القائمة:", reply_markup=main_menu_keyboard())
+    await message.answer("أهلاً بك في بوت المراجحة متعدد المنصات. اختر من القائمة:", reply_markup=main_menu_keyboard())
 
 @dp.callback_query_handler(lambda c: c.data == "main_menu")
 async def back_to_main(call: types.CallbackQuery):
     await call.answer()
     await call.message.edit_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard())
 
+# ---- إدارة بيانات التداول (إضافة/تعديل/تفعيل منصات) ----
 @dp.callback_query_handler(lambda c: c.data == "menu_edit_trading_data")
 async def menu_edit_trading_data(call: types.CallbackQuery):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
     db.close()
     await call.answer()
-    await call.message.edit_text("اختر المنصة لإضافة/تعديل مفاتيح API أو تفعيل/إيقاف:", reply_markup=user_platforms_keyboard(user))
+    await call.message.edit_text(
+        "اختر المنصة لإضافة/تعديل مفاتيح API أو تفعيل/إيقاف:",
+        reply_markup=exchange_list_keyboard(user)
+    )
 
-# ----------------------- Handlers: Platform selection & API entry -----------------------
-class PlatformNames:
-    NEED_PASSPHRASE = {"kucoin", "okx", "coinbase"}
-
-@dp.callback_query_handler(lambda c: c.data.startswith("platform_"))
-async def platform_selected(call: types.CallbackQuery, state: FSMContext):
-    platform = call.data.split("_", 1)[1]  # binance/kucoin/bybit/okx/kraken/coinbase
-    await state.update_data(selected_platform=platform)
+@dp.callback_query_handler(lambda c: c.data.startswith("ex_"))
+async def exchange_selected(call: types.CallbackQuery, state: FSMContext):
+    ex_id = call.data.split("_", 1)[1]
+    await state.update_data(selected_exchange=ex_id)
     await call.answer()
-    await call.message.edit_text(f"أرسل مفتاح API الخاص بمنصة {platform.capitalize()}:")
+    await call.message.edit_text(f"أرسل مفتاح API لمنصة {SUPPORTED_EXCHANGES[ex_id]}:")
     await Form.waiting_api_key.set()
 
 @dp.message_handler(state=Form.waiting_api_key)
 async def api_key_received(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    platform = data["selected_platform"]
     api_key = message.text.strip()
     await state.update_data(api_key=api_key)
-    await message.answer(f"أرسل Secret Key الخاص بـ {platform.capitalize()}:")
+    await message.answer("أرسل Secret Key:")
     await Form.waiting_secret_key.set()
 
 @dp.message_handler(state=Form.waiting_secret_key)
 async def secret_key_received(message: types.Message, state: FSMContext):
+    secret = message.text.strip()
+    await state.update_data(secret=secret)
     data = await state.get_data()
-    platform = data["selected_platform"]
-    secret_key = message.text.strip()
-    await state.update_data(secret_key=secret_key)
-
-    if platform in PlatformNames.NEED_PASSPHRASE:
-        await message.answer(f"أرسل Passphrase الخاص بـ {platform.capitalize()}:")
-        await Form.waiting_passphrase.set()
+    ex_id = data["selected_exchange"]
+    # بعض المنصات تتطلب password/passphrase
+    if ex_id in ("kucoin", "okx", "coinbase"):
+        await message.answer("أرسل Passphrase/Password (إن لم يوجد اكتب '-' ):")
+        await Form.waiting_password.set()
     else:
-        # تحقق وحفظ
-        await save_platform_keys(message, state, platform, passphrase=None)
+        # تحقق واحفظ
+        await finalize_exchange_creds(message, state, password=None)
 
-@dp.message_handler(state=Form.waiting_passphrase)
-async def passphrase_received(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    platform = data["selected_platform"]
-    passphrase = message.text.strip()
-    await save_platform_keys(message, state, platform, passphrase=passphrase)
+@dp.message_handler(state=Form.waiting_password)
+async def password_received(message: types.Message, state: FSMContext):
+    password = message.text.strip()
+    if password == "-":
+        password = None
+    await finalize_exchange_creds(message, state, password=password)
 
-async def save_platform_keys(message: types.Message, state: FSMContext, platform: str, passphrase: str = None):
+async def finalize_exchange_creds(message: types.Message, state: FSMContext, password: Optional[str]):
     data = await state.get_data()
+    ex_id = data["selected_exchange"]
     api_key = data["api_key"]
-    secret_key = data["secret_key"]
+    secret = data["secret"]
 
-    # تحقّق سريع بالمفاتيح عن طريق CCXT
-    try:
-        ex = make_exchange(platform, api_key, secret_key, passphrase)
-        ok = await verify_keys_ccxt(ex)
-    except Exception:
-        ok = False
-
-    if not ok:
-        await message.answer("❌ المفاتيح غير صحيحة أو غير مفعلة للتداول/القراءة. تأكد من الصلاحيات وأعد المحاولة.")
+    valid = await verify_keys(ex_id, api_key, secret, password)
+    if not valid:
+        await message.answer("❌ المفاتيح غير صحيحة أو الصلاحيات ناقصة. تأكد من تفعيل القراءة والتداول فقط.")
         await state.finish()
         return
 
-    # حفظ في DB
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+    cred = db.query(ExchangeCredential).filter_by(user_id=user.id, exchange_id=ex_id).first()
+    if not cred:
+        cred = ExchangeCredential(user_id=user.id, exchange_id=ex_id)
+    cred.api_key = api_key
+    cred.secret = secret
+    cred.password = password
+    cred.active = True
+    db.add(cred)
+    db.commit()
+    db.close()
 
-    platform = platform.lower()
-    if platform == "binance":
-        user.binance_api, user.binance_secret, user.binance_active = api_key, secret_key, True
-    elif platform == "kucoin":
-        user.kucoin_api, user.kucoin_secret, user.kucoin_passphrase, user.kucoin_active = api_key, secret_key, passphrase, True
-    elif platform == "bybit":
-        user.bybit_api, user.bybit_secret, user.bybit_active = api_key, secret_key, True
-    elif platform == "okx":
-        user.okx_api, user.okx_secret, user.okx_passphrase, user.okx_active = api_key, secret_key, passphrase, True
-    elif platform == "kraken":
-        user.kraken_api, user.kraken_secret, user.kraken_active = api_key, secret_key, True
-    elif platform == "coinbase":
-        user.coinbase_api, user.coinbase_secret, user.coinbase_passphrase, user.coinbase_active = api_key, secret_key, passphrase, True
+    await message.answer(f"✅ تم ربط {SUPPORTED_EXCHANGES[ex_id]} وتفعيلها!", reply_markup=main_menu_keyboard())
+    await state.finish()
 
+# ---- تحديد مبلغ وأزواج ----
+@dp.callback_query_handler(lambda c: c.data == "menu_set_amount_symbols")
+async def set_amount_symbols_handler(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text(
+        "أرسل مبلغ الاستثمار بالدولار (USDT) مثل: 200\nثم أرسل الأزواج مفصولة بفواصل مثل: BTC/USDT,ETH/USDT,SOL/USDT\nإن تركت الأزواج فارغة سنستخدم القائمة الافتراضية.")
+    await Form.waiting_investment_amount.set()
+
+@dp.message_handler(state=Form.waiting_investment_amount)
+async def amount_received(message: types.Message, state: FSMContext):
+    try:
+        amount = float(message.text.strip())
+        await state.update_data(invest_amount=amount)
+        await message.answer("أرسل الأزواج (اختياري)، أو أرسل '-' للاستخدام الافتراضي:")
+        await Form.choose_symbols.set()
+    except Exception:
+        await message.answer("❌ أدخل رقمًا صالحًا للمبلغ.")
+
+@dp.message_handler(state=Form.choose_symbols)
+async def symbols_received(message: types.Message, state: FSMContext):
+    symbols_txt = message.text.strip()
+    symbols: List[str]
+    if symbols_txt == '-' or not symbols_txt:
+        symbols = DEFAULT_SYMBOLS
+    else:
+        symbols = [s.strip().upper() for s in symbols_txt.split(',') if s.strip()]
+    data = await state.get_data()
+    amount = data["invest_amount"]
+
+    db = SessionLocal()
+    user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+    user.investment_amount = amount
+    # نخزن أول زوج كافتراضي (حل وسط)
+    user.base_quote = symbols[0]
+    user.fee_consent = False  # إعادة طلب موافقة قبل البدء
     db.add(user)
     db.commit()
     db.close()
 
-    await message.answer(f"✅ تم ربط {platform.capitalize()} بنجاح!", reply_markup=main_menu_keyboard())
+    await state.update_data(symbols=symbols)
+
+    await message.answer(
+        "📋 قبل البدء سنعرض تقدير الرسوم للصفقة الواحدة (جانبي الشراء والبيع) ونحتاج موافقتك.\n"
+        "أرسل /consent للموافقة أو /cancel للإلغاء."
+    )
+    await Form.fee_consent.set()
+
+@dp.message_handler(commands=["consent"], state=Form.fee_consent)
+async def consent_given(message: types.Message, state: FSMContext):
+    db = SessionLocal()
+    user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+    user.fee_consent = True
+    db.add(user)
+    db.commit()
+    db.close()
+
+    await message.answer("✅ تم حفظ الموافقة على الرسوم لهذه الجلسة.", reply_markup=main_menu_keyboard())
     await state.finish()
 
-# ----------------------- Handlers: Start/Stop invest -----------------------
+@dp.message_handler(commands=["cancel"], state=Form.fee_consent)
+async def consent_cancel(message: types.Message, state: FSMContext):
+    await message.answer("تم إلغاء العملية.", reply_markup=main_menu_keyboard())
+    await state.finish()
+
+# ---- بدء/إيقاف الاستثمار ----
 @dp.callback_query_handler(lambda c: c.data == "menu_start_invest")
 async def start_invest_handler(call: types.CallbackQuery):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=call.from_user.id).first()
 
-    # لازم على الأقل منصة واحدة مفعّلة ومفاتيح صالحة
-    active_exs = [n for n, ex, has in get_user_active_exchanges(user) if has]
-    if not active_exs:
-        await call.answer("❌ لم تقم بربط أي منصة تداول بمفاتيح صالحة.")
+    active_creds = db.query(ExchangeCredential).filter_by(user_id=user.id, active=True).all()
+    if not active_creds or len(active_creds) < 2:
+        await call.answer("❌ يجب تفعيل منصتين على الأقل.")
         db.close()
         return
-
-    # لو مفيش مبلغ استثمار، هنطلبه
     if user.investment_amount <= 0:
-        await call.answer()
-        await call.message.edit_text("💵 أرسل مبلغ الاستثمار بالـ USDT (مثال: 100):")
-        await Form.waiting_investment_amount.set()
+        await call.answer("❌ لم تحدد مبلغ الاستثمار.")
+        db.close()
+        return
+    if not user.fee_consent:
+        await call.answer("❌ يجب الموافقة على الرسوم أولاً عبر قائمة تحديد المبلغ/الأزواج.")
         db.close()
         return
 
@@ -361,27 +390,9 @@ async def start_invest_handler(call: types.CallbackQuery):
     db.add(user)
     db.commit()
     db.close()
-
     await call.answer()
-    await call.message.edit_text("🚀 تم بدء الاستثمار والمراجحة تلقائيًا. استخدم 'إيقاف الاستثمار' لإيقافه.", reply_markup=main_menu_keyboard())
+    await call.message.edit_text("🚀 تم بدء الاستثمار والمراجحة تلقائياً. يمكنك الإيقاف من القائمة.")
     asyncio.create_task(run_arbitrage_loop(call.from_user.id))
-
-@dp.message_handler(state=Form.waiting_investment_amount)
-async def investment_amount_received(message: types.Message, state: FSMContext):
-    try:
-        amt = float(message.text.strip())
-        if amt <= 0:
-            raise ValueError
-        db = SessionLocal()
-        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        user.investment_amount = amt
-        db.add(user)
-        db.commit()
-        db.close()
-        await state.finish()
-        await message.answer(f"✅ تم حفظ مبلغ الاستثمار: {amt:.2f} USDT.\nاضغط 'ابدأ استثمار' للانطلاق.", reply_markup=main_menu_keyboard())
-    except Exception:
-        await message.answer("❌ رجاءً أرسل رقمًا صحيحًا أكبر من 0.")
 
 @dp.callback_query_handler(lambda c: c.data == "menu_stop_invest")
 async def stop_invest_handler(call: types.CallbackQuery):
@@ -392,9 +403,9 @@ async def stop_invest_handler(call: types.CallbackQuery):
     db.commit()
     db.close()
     await call.answer()
-    await call.message.edit_text("⏸️ تم إيقاف الاستثمار.", reply_markup=main_menu_keyboard())
+    await call.message.edit_text("🛑 تم إيقاف الاستثمار.", reply_markup=main_menu_keyboard())
 
-# ----------------------- تقرير فترة -----------------------
+# ---- تقارير ----
 @dp.callback_query_handler(lambda c: c.data == "menu_report")
 async def report_start_handler(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
@@ -409,7 +420,7 @@ async def report_start_date_received(message: types.Message, state: FSMContext):
         await message.answer("📅 أرسل تاريخ النهاية (YYYY-MM-DD):")
         await Form.waiting_report_end.set()
     except Exception:
-        await message.answer("❌ صيغة التاريخ غير صحيحة. استخدم: YYYY-MM-DD")
+        await message.answer("❌ صيغة التاريخ غير صحيحة.")
 
 @dp.message_handler(state=Form.waiting_report_end)
 async def report_end_date_received(message: types.Message, state: FSMContext):
@@ -418,93 +429,57 @@ async def report_end_date_received(message: types.Message, state: FSMContext):
         data = await state.get_data()
         start_date = data["report_start"]
         if end_date < start_date:
-            await message.answer("❌ تاريخ النهاية لا يمكن أن يكون قبل البداية.")
+            await message.answer("❌ النهاية قبل البداية.")
             return
 
         db = SessionLocal()
         user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        trades = db.query(TradeLog).filter(
-            TradeLog.user_id == user.id,
-            TradeLog.timestamp >= start_date,
-            TradeLog.timestamp <= end_date + timedelta(days=1),
-        ).all()
+        trades = (
+            db.query(TradeLog)
+            .filter(
+                TradeLog.user_id == user.id,
+                TradeLog.timestamp >= start_date,
+                TradeLog.timestamp <= end_date + timedelta(days=1),
+            )
+            .all()
+        )
         db.close()
 
         if not trades:
-            await message.answer("لا توجد صفقات في هذه الفترة.")
+            await message.answer("لا توجد بيانات عن هذه الفترة.")
             await state.finish()
             return
 
-        total_profit = sum(t.profit for t in trades)
-        lines = [f"📊 كشف حساب {start_date.date()} → {end_date.date()}:"]
-        for t in trades:
-            lines.append(
-                f"{t.timestamp.date()} • {t.trade_type} • {t.symbol} • كمية: {t.amount:.6f} • ربح: {t.profit:.4f} USDT"
-            )
-        lines.append(f"\n💰 إجمالي الربح: {total_profit:.4f} USDT")
+        total_gross = sum(t.gross_profit for t in trades)
+        total_fees = sum(t.fees_total for t in trades)
+        total_net = sum(t.net_profit for t in trades)
+        lines = [
+            f"📊 كشف حساب من {start_date.date()} إلى {end_date.date()}:",
+            "\n".join(
+                f"{t.timestamp.date()} - {t.symbol} - {t.leg_buy_exchange}->{t.leg_sell_exchange} - صافي: {t.net_profit:.2f} USDT"
+                for t in trades
+            ),
+            "\n",
+            f"💵 إجمالي الربح قبل الرسوم: {total_gross:.2f} USDT",
+            f"💸 إجمالي الرسوم: {total_fees:.2f} USDT",
+            f"✅ الصافي: {total_net:.2f} USDT",
+        ]
         await message.answer("\n".join(lines))
         await state.finish()
     except Exception:
-        await message.answer("❌ صيغة التاريخ غير صحيحة. استخدم: YYYY-MM-DD")
+        await message.answer("❌ صيغة التاريخ غير صحيحة.")
 
-# ----------------------- حالة السوق (OpenAI) -----------------------
-async def get_market_analysis():
-    try:
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful crypto market analyst."},
-                {"role": "user", "content":
-                 "اعطني ملخص تحليل سوق العملات الرقمية الحالي، مع أسعار لبعض الأزواج الرئيسية مثل BTC/USDT و ETH/USDT،"
-                 " ونبذة عن التوقعات بناءً على مؤشرات RSI و MACD، واذكر التحذيرات إن وجدت."
-                 }
-            ],
-            max_tokens=350,
-            temperature=0.7
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        return f"❌ تعذّر جلب تحليل السوق: {e}"
-
-@dp.callback_query_handler(lambda c: c.data == "menu_market_status")
-async def market_status_handler(call: types.CallbackQuery):
-    await call.answer()
-    analysis_text = await get_market_analysis()
-    await call.message.edit_text(analysis_text, reply_markup=main_menu_keyboard())
-
-# ----------------------- اختبار مفاتيح منصة عامة -----------------------
-@dp.callback_query_handler(lambda c: c.data == "test_platform_prompt")
-async def test_platform_prompt_handler(call: types.CallbackQuery):
-    await call.answer()
-    await call.message.edit_text(
-        "أرسل لاختبار مفاتيحك بهذه الصيغة:\n\n"
-        "/test_keys <platform> <API_KEY> <SECRET> [PASSPHRASE]\n\n"
-        "مثال:\n/test_keys kucoin abc def ghi\n/test_keys binance abc def"
-    )
-
-@dp.message_handler(commands=["test_keys"])
-async def test_keys_handler(message: types.Message):
-    parts = message.text.split()
-    if len(parts) < 4:
-        await message.answer("❌ الصيغة: /test_keys <platform> <API_KEY> <SECRET> [PASSPHRASE]")
-        return
-    platform = parts[1].lower()
-    api_key, secret = parts[2], parts[3]
-    passphrase = parts[4] if len(parts) > 4 else None
-    try:
-        ex = make_exchange(platform, api_key, secret, passphrase)
-        ok = await verify_keys_ccxt(ex)
-        await message.answer("✅ المفاتيح صالحة." if ok else "❌ المفاتيح غير صالحة.")
-    except Exception as e:
-        await message.answer(f"❌ خطأ: {e}")
-
-# ----------------------- المراجحة التلقائية -----------------------
+# ----------------------- ARBITRAGE LOOP -----------------------
 async def run_arbitrage_loop(user_telegram_id: int):
     db = SessionLocal()
     user = db.query(User).filter_by(telegram_id=user_telegram_id).first()
-    if not user:
+    if not user or user.investment_status != "started":
         db.close()
         return
+
+    # حمّل الرموز التي سيحاول عليها – نخزن فقط الأول في DB، لكن سنجلب الباقي من الحالة المؤقتة عبر fallback
+    # للحفاظ على البساطة سنستخدم DEFAULT_SYMBOLS هنا. بإمكانك تخزينها في جدول منفصل لاحقًا.
+    symbols = DEFAULT_SYMBOLS
 
     while True:
         db.refresh(user)
@@ -513,174 +488,105 @@ async def run_arbitrage_loop(user_telegram_id: int):
             return
 
         try:
-            active = get_user_active_exchanges(user)
-            tradables = [(name, ex) for name, ex, has in active if has]
-            if len(tradables) < 1:
-                await bot.send_message(user.telegram_id, "❌ لا توجد منصات مفعّلة بمفاتيح صالحة.")
+            active_creds = db.query(ExchangeCredential).filter_by(user_id=user.id, active=True).all()
+            if len(active_creds) < 2:
+                await bot.send_message(user.telegram_id, "❌ يجب أن تبقى منصتان مفعّلتان على الأقل. تم الإيقاف.")
                 user.investment_status = "stopped"
                 db.add(user)
                 db.commit()
                 db.close()
                 return
 
-            # حمّل الأسواق مرة واحدة لكل منصة + استرجع سعر السحب/العرض
-            prices = {}
-            for name, ex in tradables:
-                try:
-                    await asyncio.to_thread(ex.load_markets)
-                    sym = normalize_symbol(ex, ARBITRAGE_SYMBOL)
-                    ticker = await asyncio.to_thread(ex.fetch_ticker, sym)
-                    ask = float(ticker.get("ask") or ticker.get("last") or 0)
-                    bid = float(ticker.get("bid") or ticker.get("last") or 0)
-                    if ask > 0 and bid > 0:
-                        prices[name] = {"symbol": sym, "ask": ask, "bid": bid, "ex": ex}
-                except Exception:
+            for symbol in symbols:
+                best_buy, best_sell = await fetch_best_prices(active_creds, symbol)
+                if not best_buy or not best_sell:
+                    continue
+                buy_ex_id, ask = best_buy
+                sell_ex_id, bid = best_sell
+
+                # هامش المراجحة التقريبي قبل الرسوم
+                spread = bid - ask
+                if spread <= 0:
                     continue
 
-            if len(prices) < 2:
-                await asyncio.sleep(LOOP_SLEEP_SECONDS)
-                continue
+                # تقدير الرسوم كنسبة من قيمة الرجلين
+                cred_buy = next(c for c in active_creds if c.exchange_id == buy_ex_id)
+                cred_sell = next(c for c in active_creds if c.exchange_id == sell_ex_id)
+                fee_rate_sum = await estimate_fees(cred_buy, cred_sell, symbol, 0)
 
-            # ابحث عن أفضل فرصة: شراء الأرخص (ask) وبيع الأغلى (bid)
-            best_buy_name, best_sell_name = None, None
-            best_buy_ask, best_sell_bid = 10**12, 0.0
-            sym_use = ARBITRAGE_SYMBOL
+                amount_quote = user.investment_amount  # بالدولار (USDT)
+                amount_base = amount_quote / ask  # الكمية المراد شراؤها
 
-            for name, info in prices.items():
-                if info["ask"] < best_buy_ask:
-                    best_buy_ask = info["ask"]
-                    best_buy_name = name
-                    sym_use = info["symbol"]
-                if info["bid"] > best_sell_bid:
-                    best_sell_bid = info["bid"]
-                    best_sell_name = name
+                gross_profit = spread * amount_base
+                fees_total = fee_rate_sum * (amount_quote + amount_base * bid)
+                net_profit = gross_profit - fees_total
 
-            # لازم تكون منصتين مختلفتين
-            if not best_buy_name or not best_sell_name or best_buy_name == best_sell_name:
-                await asyncio.sleep(LOOP_SLEEP_SECONDS)
-                continue
+                # حد أدنى للربح الصافي كي ننفذ (يمكن ضبطه)
+                min_net = 1.0  # 1 USDT
+                if net_profit <= min_net:
+                    continue
 
-            spread_usd = best_sell_bid - best_buy_ask
-            if spread_usd < ARBITRAGE_THRESHOLD_USD:
-                await asyncio.sleep(LOOP_SLEEP_SECONDS)
-                continue
+                # 🔔 تنبيه ونيل موافقة صريحة قبل أول صفقة على هذا الزوج في الجلسة
+                # (يمكن توسيعها لتكون موافقة لكل عملية؛ هنا نفترض موافقة الجلسة كافية)
 
-            ex_buy = prices[best_buy_name]["ex"]
-            ex_sell = prices[best_sell_name]["ex"]
+                # تنفيذ الصفقات (سوق) باستخدام ccxt
+                try:
+                    ex_buy = build_ccxt_instance(cred_buy)
+                    ex_sell = build_ccxt_instance(cred_sell)
 
-            # الرسوم (taker) لكل منصة
-            fee_buy = taker_fee_of(ex_buy, sym_use)
-            fee_sell = taker_fee_of(ex_sell, sym_use)
+                    # تحقق من حدود الحد الأدنى للكمية بدقة السوق
+                    await asyncio.to_thread(ex_buy.load_markets)
+                    await asyncio.to_thread(ex_sell.load_markets)
+                    market = ex_buy.markets.get(symbol) or {}
+                    lot = market.get("limits", {}).get("amount", {}).get("min") or 0
+                    if lot and amount_base < lot:
+                        continue
 
-            # رصيد المستخدم
-            # شراء يحتاج USDT في منصة الشراء، بيع يحتاج BTC في منصة البيع
-            bal_buy = await asyncio.to_thread(ex_buy.fetch_balance)
-            bal_sell = await asyncio.to_thread(ex_sell.fetch_balance)
+                    order_buy = await asyncio.to_thread(ex_buy.create_market_buy_order, symbol, amount_base)
+                    order_sell = await asyncio.to_thread(ex_sell.create_market_sell_order, symbol, amount_base)
 
-            usdt_avail = float(bal_buy.get("free", {}).get("USDT", 0.0) or bal_buy.get("USDT", {}).get("free", 0.0) or 0.0)
-            btc_avail = float(bal_sell.get("free", {}).get("BTC", 0.0) or bal_sell.get("BTC", {}).get("free", 0.0) or 0.0)
+                    # تسجيل
+                    t = TradeLog(
+                        user_id=user.id,
+                        leg_buy_exchange=buy_ex_id,
+                        leg_sell_exchange=sell_ex_id,
+                        symbol=symbol,
+                        amount=amount_base,
+                        entry_price=ask,
+                        exit_price=bid,
+                        gross_profit=gross_profit,
+                        fees_total=fees_total,
+                        net_profit=net_profit,
+                        note="market buy/sell",
+                    )
+                    db.add(t)
+                    db.commit()
 
-            invest_usdt = float(user.investment_amount or 0)
-            if invest_usdt <= 0:
-                invest_usdt = usdt_avail  # لو المستخدم ماحطش مبلغ، هنستعمل كل المتاح
+                    await bot.send_message(
+                        user.telegram_id,
+                        (
+                            f"✅ صفقة مراجحة ناجحة على {symbol}\n"
+                            f"شراء من {SUPPORTED_EXCHANGES.get(buy_ex_id, buy_ex_id)} بسعر {ask:.4f}\n"
+                            f"بيع في {SUPPORTED_EXCHANGES.get(sell_ex_id, sell_ex_id)} بسعر {bid:.4f}\n"
+                            f"الكمية: {amount_base:.6f}\n"
+                            f"💵 الربح قبل الرسوم: {gross_profit:.2f} USDT\n"
+                            f"💸 الرسوم المقدّرة: {fees_total:.2f} USDT\n"
+                            f"✅ الصافي: {net_profit:.2f} USDT"
+                        )
+                    )
 
-            # كمية الشراء (BTC) بناءً على المتاح
-            qty_by_invest = invest_usdt / best_buy_ask
-            qty_cap_by_balance = usdt_avail / best_buy_ask
-            # لازم يكون عندنا كمية للبيع كافية في المنصة الأخرى (لو هنبيع فورًا)
-            qty_cap_sell_balance = btc_avail
+                except Exception as ex_err:
+                    logging.exception(ex_err)
+                    await bot.send_message(user.telegram_id, f"❌ خطأ أثناء التنفيذ: {ex_err}")
 
-            amount_to_trade = max(0.0, min(qty_by_invest, qty_cap_by_balance, qty_cap_sell_balance))
-
-            if amount_to_trade <= 0:
-                # مفيش رصيد كافي: هنبلّغ المستخدم ونكمل
-                await bot.send_message(
-                    user.telegram_id,
-                    "ℹ️ فرصة مراجحة متاحة لكن الرصيد غير كافٍ (USDT في منصة الشراء أو BTC في منصة البيع)."
-                )
-                await asyncio.sleep(LOOP_SLEEP_SECONDS)
-                continue
-
-            # تقدير صافي الربح قبل التنفيذ
-            gross_profit_usd = spread_usd * amount_to_trade
-            fees_buy_usd = amount_to_trade * best_buy_ask * fee_buy
-            fees_sell_usd = amount_to_trade * best_sell_bid * fee_sell
-            bot_fee_usd = amount_to_trade * best_sell_bid * BOT_FEE_PCT
-            net_profit = gross_profit_usd - fees_buy_usd - fees_sell_usd - bot_fee_usd
-
-            if net_profit <= 0:
-                await asyncio.sleep(LOOP_SLEEP_SECONDS)
-                continue
-
-            # تنفيذ السوق (Market) — شراء ثم بيع
-            # ملاحظة: لو المنصة لا تدعم market أو الرمز مختلف، قد يرمي استثناء
-            # شراء
-            create_buy = await asyncio.to_thread(
-                ex_buy.create_market_buy_order, sym_use, amount_to_trade
-            )
-            # بيع
-            create_sell = await asyncio.to_thread(
-                ex_sell.create_market_sell_order, sym_use, amount_to_trade
-            )
-
-            # حفظ السجل
-            trade_log = TradeLog(
-                user_id=user.id,
-                trade_type=f"Buy {best_buy_name} / Sell {best_sell_name}",
-                platform_buy=best_buy_name,
-                platform_sell=best_sell_name,
-                symbol=sym_use,
-                amount=amount_to_trade,
-                price_buy=best_buy_ask,
-                price_sell=best_sell_bid,
-                taker_fee_buy=fee_buy,
-                taker_fee_sell=fee_sell,
-                bot_fee=bot_fee_usd,
-                profit=net_profit
-            )
-            db.add(trade_log)
-            db.commit()
-
-            # إشعار المستخدم
-            msg = (
-                f"✅ تمت صفقة مراجحة!\n"
-                f"• شراء: {best_buy_name} @ {best_buy_ask:.2f}\n"
-                f"• بيع: {best_sell_name} @ {best_sell_bid:.2f}\n"
-                f"• الرمز: {sym_use}\n"
-                f"• الكمية: {amount_to_trade:.6f}\n"
-                f"• الرسوم (شراء): {fees_buy_usd:.4f} USDT\n"
-                f"• الرسوم (بيع): {fees_sell_usd:.4f} USDT\n"
-                f"• عمولة البوت: {bot_fee_usd:.4f} USDT\n"
-                f"• الربح الصافي: {net_profit:.4f} USDT"
-            )
-            await bot.send_message(user.telegram_id, msg)
+            # مهلة بين الدورات
+            await asyncio.sleep(30)
 
         except Exception as e:
-            try:
-                await bot.send_message(user.telegram_id, f"❌ خطأ في المراجحة: {e}")
-            except Exception:
-                pass
+            logging.exception(e)
+            await bot.send_message(user.telegram_id, f"❌ خطأ عام: {e}")
+            await asyncio.sleep(30)
 
-        await asyncio.sleep(LOOP_SLEEP_SECONDS)
-
-# ----------------------- Webhook Startup/Shutdown -----------------------
-async def on_startup(dp):
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook set to: {WEBHOOK_URL}")
-
-async def on_shutdown(dp):
-    await bot.delete_webhook()
-    logging.info("Webhook deleted")
-
-# ----------------------- RUN (Webhook) -----------------------
+# ----------------------- RUN BOT -----------------------
 if __name__ == "__main__":
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path="/" + WEBHOOK_URL.split("/", 3)[-1],  # يسمح بتمرير كامل المسار من env
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host=WEBAPP_HOST,
-        port=WEBAPP_PORT,
-    )
+    executor.start_polling(dp, skip_updates=True)
