@@ -242,7 +242,7 @@ async def passphrase_received(message: types.Message, state: FSMContext):
     await message.answer("العودة للقائمة الرئيسية:", reply_markup=get_main_menu_keyboard())
 
 # --- 8. حلقة المراجحة ---
-async def run_arbitrage_loop(user_telegram_id, bot: types.Bot):
+async def run_arbitrage_loop(user_telegram_id, bot: Bot):
     while True:
         with SessionLocal() as db:
             user = db.query(User).filter_by(telegram_id=user_telegram_id).first()
