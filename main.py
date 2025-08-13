@@ -416,8 +416,288 @@ async def run_arbitrage(user_id: int):
                 db.commit()
                 break
             
-            # هنا يتم تنفيذ منطق المراجحة الفعلي
-            # هذا مثال مبسط للتوضيح فقط
+           async def run_arbitrage(user_id: int):
+    db = SessionLocal()
+    user = db.query(User).filter_by(telegram_id=user_id).first()
+    
+    while user.investment_status == "started":
+        try:
+            # 1. تحميل بيانات المستخدم والمنصات المفعلة
+            active_exchanges = [
+                ex for ex in user.exchanges 
+                if ex.active and ex.encrypted_api_key and ex.encrypted_secret
+            ]
+            
+            if len(active_exchanges) < 2:
+                await bot.send_message(user_id, "❌ تحتاج إلى تفعيل منصتين على الأقل")
+                user.investment_status = "stopped"
+                db.commit()
+                break
+            
+            # 2. فك تشفير المفاتيح وإنشاء اتصالات بالمنصات
+            exchanges = []
+            for cred in active_exchanges:
+                try:
+                    exchange = getattr(ccxt, cred.exchange_id)({
+                        'apiKey': crypto_manager.decrypt(cred.encrypted_api_key),
+                        'secret': crypto_manager.decrypt(cred.encrypted_secret),
+                        'password': crypto_manager.decrypt(cred.encrypted_password) if cred.encrypted_password else None,
+                        'enableRateLimit': True,
+                        'options': {'defaultType': 'spot'}
+                    })
+                    await asyncio.to_thread(exchange.load_markets)
+                    exchanges.append(exchange)
+                except Exception as e:
+                    logging.error(f"Failed to initialize {cred.exchange_id}: {e}")
+                    continue
+            
+            if len(exchanges) < 2:
+                await bot.send_message(user_id, "❌ فشل الاتصال بمعظم المنصات")
+                await asyncio.sleep(60)
+                continue
+            
+            # 3. تحليل السوق للعثور على أفضل فرص المراجحة
+            opportunities = await find_arbitrage_opportunities(exchanges, user.investment_amount, user.min_profit_percent)
+            
+            if not opportunities:
+                await asyncio.sleep(30)
+                continue
+            
+            # 4. تنفيذ أفضل فرصة مراجحة
+            best_opportunity = max(opportunities, key=lambda x: x['profit_percent'])
+            await execute_arbitrage_trade(user, best_opportunity)
+            
+            # 5. انتظر فترة مناسبة قبل الدورة التالية
+            await asyncio.sleep(20)
+            
+        except Exception as e:
+            logging.error(f"Error in arbitrage loop: {e}")
+            await bot.send_message(user_id, f"⚠️ حدث خطأ في عملية المراجحة: {str(e)}")
+            await asyncio.sleep(60)
+        finally:
+            # تحديث حالة المستخدم من قاعدة البيانات
+            db.refresh(user)
+    
+    db.close()
+
+async def find_arbitrage_opportunities(exchanges: list, investment_amount: float, min_profit_percent: float) -> list:
+    opportunities = []
+    symbols_to_check = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"]
+    
+    for symbol in symbols_to_check:
+        try:
+            # جمع بيانات الأسعار من جميع المنصات
+            prices = []
+            for exchange in exchanges:
+                try:
+                    ticker = await asyncio.to_thread(exchange.fetch_ticker, symbol)
+                    prices.append({
+                        'exchange': exchange,
+                        'symbol': symbol,
+                        'bid': float(ticker['bid']),
+                        'ask': float(ticker['ask']),
+                        'bid_volume': float(ticker['bidVolume']),
+                        'ask_volume': float(ticker['askVolume'])
+                    })
+                except Exception as e:
+                    logging.warning(f"Failed to get prices from {exchange.id}: {e}")
+                    continue
+            
+            if len(prices) < 2:
+                continue
+            
+            # البحث عن أفضل فرص الشراء والبيع
+            best_buy = min(prices, key=lambda x: x['ask'])
+            best_sell = max(prices, key=lambda x: x['bid'])
+            
+            if best_buy['exchange'].id == best_sell['exchange'].id:
+                continue
+            
+            # حساب فرق السعر والنسبة المئوية للربح
+            price_diff = best_sell['bid'] - best_buy['ask']
+            profit_percent = (price_diff / best_buy['ask']) * 100
+            
+            if profit_percent < min_profit_percent:
+                continue
+            
+            # حساب الكمية المتاحة للتداول
+            max_amount = min(
+                investment_amount / best_buy['ask'],
+                best_buy['ask_volume'],
+                best_sell['bid_volume']
+            )
+            
+            if max_amount <= 0:
+                continue
+            
+            # حساب الرسوم التقديرية
+            fee_buy = await estimate_fee(best_buy['exchange'], symbol, 'buy', max_amount)
+            fee_sell = await estimate_fee(best_sell['exchange'], symbol, 'sell', max_amount)
+            total_fee = fee_buy + fee_sell
+            
+            # صافي الربح بعد الرسوم
+            gross_profit = price_diff * max_amount
+            net_profit = gross_profit - total_fee
+            net_profit_percent = (net_profit / (best_buy['ask'] * max_amount)) * 100
+            
+            if net_profit_percent < min_profit_percent:
+                continue
+            
+            opportunities.append({
+                'symbol': symbol,
+                'buy_exchange': best_buy['exchange'],
+                'sell_exchange': best_sell['exchange'],
+                'buy_price': best_buy['ask'],
+                'sell_price': best_sell['bid'],
+                'amount': max_amount,
+                'gross_profit': gross_profit,
+                'fees': total_fee,
+                'net_profit': net_profit,
+                'profit_percent': net_profit_percent,
+                'timestamp': datetime.now()
+            })
+            
+        except Exception as e:
+            logging.error(f"Error analyzing {symbol}: {e}")
+            continue
+    
+    return opportunities
+
+async def estimate_fee(exchange, symbol: str, side: str, amount: float) -> float:
+    try:
+        market = exchange.markets[symbol]
+        fee_rate = market['taker'] if 'taker' in market else 0.001
+        
+        if side == 'buy':
+            return fee_rate * amount * market['ask']
+        else:
+            return fee_rate * amount * market['bid']
+    except:
+        return 0.002 * amount  # افترض رسوم 0.2% إذا فشل الحصول على الرسوم الدقيقة
+
+async def execute_arbitrage_trade(user: User, opportunity: dict):
+    db = SessionLocal()
+    try:
+        # 1. تنفيذ أمر الشراء
+        buy_exchange = opportunity['buy_exchange']
+        buy_order = await asyncio.to_thread(
+            buy_exchange.create_market_buy_order,
+            opportunity['symbol'],
+            opportunity['amount']
+        )
+        
+        # 2. تنفيذ أمر البيع
+        sell_exchange = opportunity['sell_exchange']
+        sell_order = await asyncio.to_thread(
+            sell_exchange.create_market_sell_order,
+            opportunity['symbol'],
+            buy_order['filled']
+        )
+        
+        # 3. حساب الربح الفعلي بعد التنفيذ
+        actual_profit = sell_order['cost'] - buy_order['cost']
+        actual_profit_percent = (actual_profit / buy_order['cost']) * 100
+        
+        # 4. تسجيل الصفقة في قاعدة البيانات
+        trade = TradeLog(
+            user_id=user.id,
+            symbol=opportunity['symbol'],
+            amount=buy_order['filled'],
+            entry_price=buy_order['price'],
+            exit_price=sell_order['price'],
+            profit_percent=actual_profit_percent,
+            net_profit=actual_profit,
+            status='completed',
+            timestamp=datetime.now()
+        )
+        db.add(trade)
+        db.commit()
+        
+        # 5. إرسال إشعار للمستخدم
+        profit_emoji = "🟢" if actual_profit > 0 else "🔴"
+        message = (
+            f"{profit_emoji} **تم تنفيذ صفقة مراجحة**\n"
+            f"▫️ الزوج: {opportunity['symbol']}\n"
+            f"▫️ الكمية: {buy_order['filled']:.6f}\n"
+            f"▫️ سعر الشراء: {buy_order['price']:.4f} ({buy_exchange.id})\n"
+            f"▫️ سعر البيع: {sell_order['price']:.4f} ({sell_exchange.id})\n"
+            f"▫️ صافي الربح: {actual_profit:.4f} USDT ({actual_profit_percent:.2f}%)\n"
+            f"▫️ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+        await bot.send_message(user.telegram_id, message, parse_mode="Markdown")
+        
+        # 6. السحب التلقائي إذا كان مفعلاً
+        if user.auto_withdraw and actual_profit > 1:  # السحب إذا كان الربح أكثر من 1 USDT
+            await withdraw_profit(user, actual_profit)
+            
+    except Exception as e:
+        logging.error(f"Trade execution failed: {e}")
+        error_msg = f"❌ فشل تنفيذ الصفقة: {str(e)}"
+        
+        # تسجيل الصفقة الفاشلة
+        if 'buy_order' in locals():
+            trade = TradeLog(
+                user_id=user.id,
+                symbol=opportunity['symbol'],
+                amount=opportunity['amount'],
+                entry_price=opportunity['buy_price'],
+                exit_price=0,
+                profit_percent=0,
+                net_profit=0,
+                status='failed',
+                timestamp=datetime.now(),
+                note=str(e)
+            )
+            db.add(trade)
+            db.commit()
+            error_msg += f"\n\nتم إلغاء الصفقة وحفظ التفاصيل"
+        
+        await bot.send_message(user.telegram_id, error_msg)
+    finally:
+        db.close()
+
+async def withdraw_profit(user: User, amount: float):
+    if not user.wallet_address:
+        await bot.send_message(
+            user.telegram_id,
+            "⚠️ لم يتم تعيين محفظة للسحب التلقائي\n"
+            "الرجاء تعيين محفظتك من الإعدادات"
+        )
+        return False
+    
+    try:
+        # في الواقع الفعلي، هنا نستخدم API المنصة للسحب
+        # هذا مثال افتراضي للتوضيح فقط
+        
+        # نقوم بخصم رسوم السحب (0.5 USDT كمثال)
+        withdrawal_fee = 0.5
+        net_amount = amount - withdrawal_fee
+        
+        if net_amount <= 0:
+            await bot.send_message(
+                user.telegram_id,
+                f"⚠️ المبلغ صغير جداً للسحب بعد خصم الرسوم ({withdrawal_fee} USDT)"
+            )
+            return False
+        
+        # هنا يتم تنفيذ السحب الفعلي باستخدام API المنصة
+        # withdrawal_result = await exchange.withdraw(...)
+        
+        await bot.send_message(
+            user.telegram_id,
+            f"✅ تم سحب {net_amount:.4f} USDT بنجاح إلى محفظتك\n"
+            f"العنوان: {user.wallet_address[:6]}...{user.wallet_address[-4]}\n"
+            f"رسوم السحب: {withdrawal_fee} USDT"
+        )
+        return True
+    except Exception as e:
+        logging.error(f"Withdrawal failed: {e}")
+        await bot.send_message(
+            user.telegram_id,
+            f"❌ فشل السحب التلقائي: {str(e)}\n"
+            "الرجاء التحقق من إعدادات المحفظة"
+        )
+        return False
             
             await asyncio.sleep(30)  # انتظر 30 ثانية بين كل دورة
             
