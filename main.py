@@ -12,7 +12,18 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.markdown import hbold, hcode
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey, BigInteger
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime,
+    Boolean,
+    ForeignKey,
+    BigInteger,
+    UniqueConstraint  # تم استيراده هنا
+)
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import ccxt
 
