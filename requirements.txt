@@ -1,7 +1,6 @@
 aiogram==2.25.1
-SQLAlchemy
-PyMySQL
-python-binance
-kucoin-python
-openai
-ccxt
+SQLAlchemy==2.0.32
+PyMySQL==1.1.1
+ccxt==4.3.83
+openai==0.28.0
+aiohttp==3.9.5
