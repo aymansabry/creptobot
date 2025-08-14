@@ -18,6 +18,33 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 openai.api_key = OPENAI_API_KEY
 
+# ----------------- وظائف مساعدة المدير -----------------
+def get_total_users_sync():
+    session = SessionLocal()
+    total = session.query(User).count()
+    session.close()
+    return total
+
+def get_online_users_sync():
+    return 5  # مثال: يمكن تعديل حسب آخر تفاعل المستخدم
+
+def get_bot_status_sync():
+    return "البوت يعمل بشكل طبيعي."
+
+# ----------------- تحليل السوق -----------------
+async def market_analysis_summary():
+    try:
+        prompt = "اعرض ملخص سريع لحالة سوق العملات الرقمية مع نصائح استثمارية قصيرة."
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150
+        )
+        return response.choices[0].message['content'].strip()
+    except Exception as e:
+        logger.error(f"OpenAI analysis error: {e}")
+        return "لا يمكن الحصول على تحليل السوق حالياً."
+
 # ----------------- الأحداث -----------------
 @dp.message_handler(commands=['start'])
 def cmd_start(message: types.Message):
@@ -29,6 +56,7 @@ def cmd_start(message: types.Message):
 @dp.callback_query_handler(lambda call: True)
 def callbacks(call: types.CallbackQuery):
     call.answer()  # مهم جدًا للـ aiogram 2
+
     # ---------- قوائم المستخدم ----------
     if call.data == "user_manage_trading":
         call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
@@ -43,8 +71,8 @@ def callbacks(call: types.CallbackQuery):
     elif call.data == "user_stop_investment":
         call.message.answer("تم إيقاف الاستثمار الخاص بك.")
     elif call.data == "market_status":
-        analysis = asyncio.run(market_analysis_summary())
-        call.message.answer(analysis)
+        # استخدام asyncio.ensure_future بدلاً من asyncio.run داخل callback
+        asyncio.ensure_future(send_market_analysis(call))
 
     # ---------- قوائم المدير ----------
     elif call.data.startswith("admin_"):
@@ -54,45 +82,22 @@ def handle_admin_callbacks(call):
     if call.data == "admin_edit_bot_profit":
         call.message.answer("أدخل نسبة ربح البوت الجديدة:")
     elif call.data == "admin_total_users":
-        total = asyncio.run(get_total_users())
+        total = get_total_users_sync()
         call.message.answer(f"إجمالي عدد المستخدمين: {total}")
     elif call.data == "admin_online_users":
-        online = asyncio.run(get_online_users())
+        online = get_online_users_sync()
         call.message.answer(f"عدد المستخدمين أونلاين: {online}")
     elif call.data == "admin_investment_reports":
         call.message.answer("اختر الفترة لتقارير الاستثمار.")
     elif call.data == "admin_bot_status":
-        status = asyncio.run(get_bot_status())
+        status = get_bot_status_sync()
         call.message.answer(f"حالة البوت: {status}")
     elif call.data == "admin_trade_as_user":
         call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
 
-# ----------------- وظائف مساعدة المدير -----------------
-async def get_total_users():
-    session = SessionLocal()
-    total = session.query(User).count()
-    session.close()
-    return total
-
-async def get_online_users():
-    return 5  # مثال: يمكن تعديل حسب آخر تفاعل المستخدم
-
-async def get_bot_status():
-    return "البوت يعمل بشكل طبيعي."
-
-# ----------------- حالة السوق وتحليل OpenAI -----------------
-async def market_analysis_summary():
-    try:
-        prompt = "اعرض ملخص سريع لحالة سوق العملات الرقمية مع نصائح استثمارية قصيرة."
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=150
-        )
-        return response.choices[0].message['content'].strip()
-    except Exception as e:
-        logger.error(f"OpenAI analysis error: {e}")
-        return "لا يمكن الحصول على تحليل السوق حالياً."
+async def send_market_analysis(call):
+    analysis = await market_analysis_summary()
+    await call.message.answer(analysis)
 
 # ----------------- تشغيل البوت -----------------
 if __name__ == "__main__":
