@@ -9,15 +9,16 @@ from db.db_setup import SessionLocal, User
 from arbitrage import run_arbitrage, demo_arbitrage
 import openai
 
-# Logging
+# ----------------- Logging -----------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ----------------- إعداد البوت -----------------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 openai.api_key = OPENAI_API_KEY
 
-# ---------------- Handlers ----------------
+# ----------------- الأحداث -----------------
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
@@ -25,10 +26,10 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
 
-@dp.callback_query_handler(lambda c: True)
+@dp.callback_query_handler(lambda call: True)
 async def callbacks(call: types.CallbackQuery):
-    await call.answer()  # مهم جدًا
-    # --- User ---
+    await call.answer()  # مهم جدًا للـ aiogram 2
+    # ---------- قوائم المستخدم ----------
     if call.data == "user_manage_trading":
         await call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
     elif call.data == "user_start_investment":
@@ -45,10 +46,11 @@ async def callbacks(call: types.CallbackQuery):
         analysis = await market_analysis_summary()
         await call.message.answer(analysis)
 
-    # --- Admin ---
+    # ---------- قوائم المدير ----------
     elif call.data.startswith("admin_"):
         await handle_admin_callbacks(call)
 
+# ----------------- إدارة قوائم المدير -----------------
 async def handle_admin_callbacks(call: types.CallbackQuery):
     if call.data == "admin_edit_bot_profit":
         await call.message.answer("أدخل نسبة ربح البوت الجديدة:")
@@ -66,7 +68,7 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
     elif call.data == "admin_trade_as_user":
         await call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
 
-# ----------------- Helpers -----------------
+# ----------------- وظائف مساعدة المدير -----------------
 async def get_total_users():
     session = SessionLocal()
     total = session.query(User).count()
@@ -74,11 +76,12 @@ async def get_total_users():
     return total
 
 async def get_online_users():
-    return 5
+    return 5  # مثال: يمكن تعديل حسب آخر تفاعل المستخدم
 
 async def get_bot_status():
     return "البوت يعمل بشكل طبيعي."
 
+# ----------------- حالة السوق وتحليل OpenAI -----------------
 async def market_analysis_summary():
     try:
         prompt = "اعرض ملخص سريع لحالة سوق العملات الرقمية مع نصائح استثمارية قصيرة."
