@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
@@ -7,7 +8,6 @@ from menus.admin_menu import admin_main_menu_keyboard
 from db.db_setup import SessionLocal, User
 from arbitrage import run_arbitrage, demo_arbitrage
 import openai
-import asyncio
 
 # ----------------- Logging -----------------
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +18,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 openai.api_key = OPENAI_API_KEY
 
-# ----------------- الأحداث -----------------
+# ----------------- أحداث /start -----------------
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
@@ -26,8 +26,11 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
 
+# ----------------- Callback Queries -----------------
 @dp.callback_query_handler(lambda c: True)
 async def callbacks(call: types.CallbackQuery):
+    await call.answer()  # مهم جداً في aiogram 2.x
+
     # ---------- قوائم المستخدم ----------
     if call.data == "user_manage_trading":
         await call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
@@ -69,13 +72,13 @@ async def handle_admin_callbacks(call):
 # ----------------- وظائف مساعدة المدير -----------------
 async def get_total_users():
     session = SessionLocal()
-    try:
-        return session.query(User).count()
-    finally:
-        session.close()
+    total = session.query(User).count()
+    session.close()
+    return total
 
 async def get_online_users():
-    return 5  # مثال مؤقت
+    # مثال: يمكن حساب المستخدمين النشطين حسب آخر تفاعل
+    return 5
 
 async def get_bot_status():
     return "البوت يعمل بشكل طبيعي."
