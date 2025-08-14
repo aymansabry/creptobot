@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
 from config import BOT_TOKEN, ADMIN_ID, OPENAI_API_KEY
 from menus.user_menu import user_main_menu_keyboard
 from menus.admin_menu import admin_main_menu_keyboard
@@ -15,18 +14,19 @@ logger = logging.getLogger(__name__)
 
 # ----------------- إعداد البوت -----------------
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
+
 openai.api_key = OPENAI_API_KEY
 
 # ----------------- الأحداث -----------------
-@dp.message_handler(commands=['start'])
+@dp.message(commands=["start"])
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         await message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
     else:
         await message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
 
-@dp.callback_query_handler(lambda c: True)
+@dp.callback_query()
 async def callbacks(call: types.CallbackQuery):
     # ---------- قوائم المستخدم ----------
     if call.data == "user_manage_trading":
@@ -74,7 +74,6 @@ async def get_total_users():
     return total
 
 async def get_online_users():
-    # مثال: يمكن حساب المستخدمين النشطين حسب آخر تفاعل
     return 5
 
 async def get_bot_status():
@@ -96,4 +95,4 @@ async def market_analysis_summary():
 
 # ----------------- تشغيل البوت -----------------
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(dp.start_polling(bot))
