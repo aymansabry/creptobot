@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
@@ -20,68 +19,68 @@ openai.api_key = OPENAI_API_KEY
 
 # ----------------- الأحداث -----------------
 @dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
+def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
+        message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
     else:
-        await message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
+        message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
 
 @dp.callback_query_handler(lambda c: True)
-async def callbacks(call: types.CallbackQuery):
+def callbacks(call: types.CallbackQuery):
     # ---------- قوائم المستخدم ----------
     if call.data == "user_manage_trading":
-        await call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
+        call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
     elif call.data == "user_start_investment":
-        await call.message.answer("تشغيل الاستثمار الفعلي...")
-        asyncio.create_task(run_arbitrage.run_arbitrage_for_all_users())
+        run_arbitrage.run_arbitrage_for_all_users()
+        call.message.answer("تشغيل الاستثمار الفعلي...")
     elif call.data == "user_demo_investment":
-        await call.message.answer("تشغيل الاستثمار الوهمي...")
-        asyncio.create_task(demo_arbitrage.run_demo_for_all_users())
+        demo_arbitrage.run_demo_for_all_users()
+        call.message.answer("تشغيل الاستثمار الوهمي...")
     elif call.data == "user_account_statement":
-        await call.message.answer("اختر بداية الفترة لعرض كشف الحساب.")
+        call.message.answer("اختر بداية الفترة لعرض كشف الحساب.")
     elif call.data == "user_stop_investment":
-        await call.message.answer("تم إيقاف الاستثمار الخاص بك.")
+        call.message.answer("تم إيقاف الاستثمار الخاص بك.")
     elif call.data == "market_status":
-        analysis = await market_analysis_summary()
-        await call.message.answer(analysis)
+        analysis = market_analysis_summary()
+        call.message.answer(analysis)
 
     # ---------- قوائم المدير ----------
     elif call.data.startswith("admin_"):
-        await handle_admin_callbacks(call)
+        handle_admin_callbacks(call)
 
-async def handle_admin_callbacks(call):
+def handle_admin_callbacks(call):
     if call.data == "admin_edit_bot_profit":
-        await call.message.answer("أدخل نسبة ربح البوت الجديدة:")
+        call.message.answer("أدخل نسبة ربح البوت الجديدة:")
     elif call.data == "admin_total_users":
-        total = await get_total_users()
-        await call.message.answer(f"إجمالي عدد المستخدمين: {total}")
+        total = get_total_users()
+        call.message.answer(f"إجمالي عدد المستخدمين: {total}")
     elif call.data == "admin_online_users":
-        online = await get_online_users()
-        await call.message.answer(f"عدد المستخدمين أونلاين: {online}")
+        online = get_online_users()
+        call.message.answer(f"عدد المستخدمين أونلاين: {online}")
     elif call.data == "admin_investment_reports":
-        await call.message.answer("اختر الفترة لتقارير الاستثمار.")
+        call.message.answer("اختر الفترة لتقارير الاستثمار.")
     elif call.data == "admin_bot_status":
-        status = await get_bot_status()
-        await call.message.answer(f"حالة البوت: {status}")
+        status = get_bot_status()
+        call.message.answer(f"حالة البوت: {status}")
     elif call.data == "admin_trade_as_user":
-        await call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
+        call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
 
 # ----------------- وظائف مساعدة المدير -----------------
-async def get_total_users():
+def get_total_users():
     session = SessionLocal()
-    total = session.query(User).count()
-    session.close()
-    return total
+    try:
+        return session.query(User).count()
+    finally:
+        session.close()
 
-async def get_online_users():
-    # مثال: يمكن حساب المستخدمين النشطين حسب آخر تفاعل
-    return 5
+def get_online_users():
+    return 5  # مثال مؤقت
 
-async def get_bot_status():
+def get_bot_status():
     return "البوت يعمل بشكل طبيعي."
 
 # ----------------- حالة السوق وتحليل OpenAI -----------------
-async def market_analysis_summary():
+def market_analysis_summary():
     try:
         prompt = "اعرض ملخص سريع لحالة سوق العملات الرقمية مع نصائح استثمارية قصيرة."
         response = openai.ChatCompletion.create(
