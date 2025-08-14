@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 from config import BOT_TOKEN, ADMIN_ID, OPENAI_API_KEY
 from menus.user_menu import user_main_menu_keyboard
 from menus.admin_menu import admin_main_menu_keyboard
@@ -19,7 +20,7 @@ dp = Dispatcher()
 openai.api_key = OPENAI_API_KEY
 
 # ----------------- الأحداث -----------------
-@dp.message(commands=["start"])
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         await message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
