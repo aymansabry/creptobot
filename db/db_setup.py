@@ -1,15 +1,19 @@
 import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, BigInteger, DateTime, Text
+import logging
+from sqlalchemy import create_engine, Column, Integer, String, BigInteger, Float, DateTime, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from config import DATABASE_URL
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 Base = declarative_base()
 engine = create_engine(DATABASE_URL, echo=True, future=True)
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(bind=engine, future=True)
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, nullable=False)
     investment_amount = Column(Float, default=0)
     min_profit_percent = Column(Float, default=0)
@@ -19,7 +23,7 @@ class User(Base):
 
 class ExchangeCredential(Base):
     __tablename__ = "exchange_credentials"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False)
     exchange_id = Column(String(50))
     api_key = Column(String(256))
@@ -30,7 +34,7 @@ class ExchangeCredential(Base):
 
 class ArbitrageHistory(Base):
     __tablename__ = "arbitrage_history"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     symbol = Column(String(50))
@@ -47,4 +51,7 @@ class ArbitrageHistory(Base):
     success = Column(Boolean, default=False)
     error = Column(Text, nullable=True)
 
-Base.metadata.create_all(engine)
+def init_db():
+    logger.info("إنشاء أو تحديث الجداول إذا لم تكن موجودة...")
+    Base.metadata.create_all(engine)
+    logger.info("جاهز للعمل.")
