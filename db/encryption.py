@@ -1,11 +1,10 @@
-import os
 from cryptography.fernet import Fernet
+from config import ENCRYPTION_KEY
 
-KEY = os.environ.get("ENCRYPTION_KEY")
-if not KEY:
-    raise ValueError("ENCRYPTION_KEY not defined in environment variables!")
+if ENCRYPTION_KEY is None:
+    raise ValueError("ENCRYPTION_KEY غير معرف في متغيرات البيئة")
 
-fernet = Fernet(KEY.encode())
+fernet = Fernet(ENCRYPTION_KEY.encode())
 
 def encrypt_value(value: str) -> str:
     return fernet.encrypt(value.encode()).decode()
