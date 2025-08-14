@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def exchange_selection_keyboard() -> InlineKeyboardMarkup:
     platforms = [
@@ -6,6 +6,6 @@ def exchange_selection_keyboard() -> InlineKeyboardMarkup:
         "Bitget", "Gate.io", "Kraken", "Coinbase", "Bitfinex"
     ]
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(name, callback_data=f"select_{name.lower()}")] for name in platforms]
+        inline_keyboard=[[InlineKeyboardButton(text=name, callback_data=f"select_{name.lower()}")] for name in platforms]
     )
     return kb
