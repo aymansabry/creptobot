@@ -18,20 +18,72 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 openai.api_key = OPENAI_API_KEY
 
+# ----------------- الأحداث -----------------
+@dp.message_handler(commands=['start'])
+def cmd_start(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
+    else:
+        message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
+
+@dp.callback_query_handler(lambda call: True)
+def callbacks(call: types.CallbackQuery):
+    call.answer()  # مهم جدًا للـ aiogram 2
+    # ---------- قوائم المستخدم ----------
+    if call.data == "user_manage_trading":
+        call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
+    elif call.data == "user_start_investment":
+        call.message.answer("تشغيل الاستثمار الفعلي...")
+        asyncio.ensure_future(run_arbitrage.run_arbitrage_for_all_users())
+    elif call.data == "user_demo_investment":
+        call.message.answer("تشغيل الاستثمار الوهمي...")
+        asyncio.ensure_future(demo_arbitrage.run_demo_for_all_users())
+    elif call.data == "user_account_statement":
+        call.message.answer("اختر بداية الفترة لعرض كشف الحساب.")
+    elif call.data == "user_stop_investment":
+        call.message.answer("تم إيقاف الاستثمار الخاص بك.")
+    elif call.data == "market_status":
+        asyncio.ensure_future(send_market_status(call))
+
+    # ---------- قوائم المدير ----------
+    elif call.data.startswith("admin_"):
+        asyncio.ensure_future(handle_admin_callbacks(call))
+
+async def send_market_status(call):
+    analysis = await market_analysis_summary()
+    await call.message.answer(analysis)
+
+async def handle_admin_callbacks(call):
+    if call.data == "admin_edit_bot_profit":
+        await call.message.answer("أدخل نسبة ربح البوت الجديدة:")
+    elif call.data == "admin_total_users":
+        total = await get_total_users()
+        await call.message.answer(f"إجمالي عدد المستخدمين: {total}")
+    elif call.data == "admin_online_users":
+        online = await get_online_users()
+        await call.message.answer(f"عدد المستخدمين أونلاين: {online}")
+    elif call.data == "admin_investment_reports":
+        await call.message.answer("اختر الفترة لتقارير الاستثمار.")
+    elif call.data == "admin_bot_status":
+        status = await get_bot_status()
+        await call.message.answer(f"حالة البوت: {status}")
+    elif call.data == "admin_trade_as_user":
+        await call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
+
 # ----------------- وظائف مساعدة المدير -----------------
-def get_total_users_sync():
+async def get_total_users():
     session = SessionLocal()
     total = session.query(User).count()
     session.close()
     return total
 
-def get_online_users_sync():
+async def get_online_users():
     return 5  # مثال: يمكن تعديل حسب آخر تفاعل المستخدم
 
-def get_bot_status_sync():
+async def get_bot_status():
     return "البوت يعمل بشكل طبيعي."
 
-# ----------------- تحليل السوق -----------------
+# ----------------- حالة السوق وتحليل OpenAI -----------------
 async def market_analysis_summary():
     try:
         prompt = "اعرض ملخص سريع لحالة سوق العملات الرقمية مع نصائح استثمارية قصيرة."
@@ -44,60 +96,6 @@ async def market_analysis_summary():
     except Exception as e:
         logger.error(f"OpenAI analysis error: {e}")
         return "لا يمكن الحصول على تحليل السوق حالياً."
-
-# ----------------- الأحداث -----------------
-@dp.message_handler(commands=['start'])
-def cmd_start(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
-    else:
-        message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
-
-@dp.callback_query_handler(lambda call: True)
-def callbacks(call: types.CallbackQuery):
-    call.answer()  # مهم جدًا للـ aiogram 2
-
-    # ---------- قوائم المستخدم ----------
-    if call.data == "user_manage_trading":
-        call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
-    elif call.data == "user_start_investment":
-        call.message.answer("تشغيل الاستثمار الفعلي...")
-        asyncio.create_task(run_arbitrage.run_arbitrage_for_all_users())
-    elif call.data == "user_demo_investment":
-        call.message.answer("تشغيل الاستثمار الوهمي...")
-        asyncio.create_task(demo_arbitrage.run_demo_for_all_users())
-    elif call.data == "user_account_statement":
-        call.message.answer("اختر بداية الفترة لعرض كشف الحساب.")
-    elif call.data == "user_stop_investment":
-        call.message.answer("تم إيقاف الاستثمار الخاص بك.")
-    elif call.data == "market_status":
-        # استخدام asyncio.ensure_future بدلاً من asyncio.run داخل callback
-        asyncio.ensure_future(send_market_analysis(call))
-
-    # ---------- قوائم المدير ----------
-    elif call.data.startswith("admin_"):
-        handle_admin_callbacks(call)
-
-def handle_admin_callbacks(call):
-    if call.data == "admin_edit_bot_profit":
-        call.message.answer("أدخل نسبة ربح البوت الجديدة:")
-    elif call.data == "admin_total_users":
-        total = get_total_users_sync()
-        call.message.answer(f"إجمالي عدد المستخدمين: {total}")
-    elif call.data == "admin_online_users":
-        online = get_online_users_sync()
-        call.message.answer(f"عدد المستخدمين أونلاين: {online}")
-    elif call.data == "admin_investment_reports":
-        call.message.answer("اختر الفترة لتقارير الاستثمار.")
-    elif call.data == "admin_bot_status":
-        status = get_bot_status_sync()
-        call.message.answer(f"حالة البوت: {status}")
-    elif call.data == "admin_trade_as_user":
-        call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
-
-async def send_market_analysis(call):
-    analysis = await market_analysis_summary()
-    await call.message.answer(analysis)
 
 # ----------------- تشغيل البوت -----------------
 if __name__ == "__main__":
