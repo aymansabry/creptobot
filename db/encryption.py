@@ -1,13 +1,12 @@
 from cryptography.fernet import Fernet
-from config import ENCRYPTION_KEY
+import os
 
-if ENCRYPTION_KEY is None:
-    raise ValueError("ENCRYPTION_KEY غير معرف في متغيرات البيئة")
+KEY = os.environ.get("FERNET_KEY")  # تولد مرة واحدة وتخزن في البيئة
 
-fernet = Fernet(ENCRYPTION_KEY.encode())
+fernet = Fernet(KEY.encode())
 
 def encrypt_value(value: str) -> str:
     return fernet.encrypt(value.encode()).decode()
 
-def decrypt_value(token: str) -> str:
-    return fernet.decrypt(token.encode()).decode()
+def decrypt_value(value: str) -> str:
+    return fernet.decrypt(value.encode()).decode()
