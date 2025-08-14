@@ -1,6 +1,6 @@
-aiogram==2.25.1
-aiohttp==3.8.5  # أو أي نسخة أقل من 3.9.0
-SQLAlchemy==2.0.32
-PyMySQL==1.1.1
-ccxt==4.3.83
-openai==0.28.0
+aiogram==3.1.0
+SQLAlchemy==2.0.20
+PyMySQL==1.1.0
+ccxt==4.2.55
+cryptography==41.0.3
+openai==1.31.0
