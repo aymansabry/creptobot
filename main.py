@@ -9,51 +9,47 @@ from db.db_setup import SessionLocal, User
 from arbitrage import run_arbitrage, demo_arbitrage
 import openai
 
-# ----------------- Logging -----------------
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ----------------- إعداد البوت -----------------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 openai.api_key = OPENAI_API_KEY
 
-# ----------------- الأحداث -----------------
+# ---------------- Handlers ----------------
 @dp.message_handler(commands=['start'])
-def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
+        await message.answer("مرحبًا بالمدير! اختر عملية:", reply_markup=admin_main_menu_keyboard())
     else:
-        message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
+        await message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
 
-@dp.callback_query_handler(lambda call: True)
-def callbacks(call: types.CallbackQuery):
-    call.answer()  # مهم جدًا للـ aiogram 2
-    # ---------- قوائم المستخدم ----------
+@dp.callback_query_handler(lambda c: True)
+async def callbacks(call: types.CallbackQuery):
+    await call.answer()  # مهم جدًا
+    # --- User ---
     if call.data == "user_manage_trading":
-        call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
+        await call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
     elif call.data == "user_start_investment":
-        call.message.answer("تشغيل الاستثمار الفعلي...")
-        asyncio.ensure_future(run_arbitrage.run_arbitrage_for_all_users())
+        await call.message.answer("تشغيل الاستثمار الفعلي...")
+        asyncio.create_task(run_arbitrage.run_arbitrage_for_all_users())
     elif call.data == "user_demo_investment":
-        call.message.answer("تشغيل الاستثمار الوهمي...")
-        asyncio.ensure_future(demo_arbitrage.run_demo_for_all_users())
+        await call.message.answer("تشغيل الاستثمار الوهمي...")
+        asyncio.create_task(demo_arbitrage.run_demo_for_all_users())
     elif call.data == "user_account_statement":
-        call.message.answer("اختر بداية الفترة لعرض كشف الحساب.")
+        await call.message.answer("اختر بداية الفترة لعرض كشف الحساب.")
     elif call.data == "user_stop_investment":
-        call.message.answer("تم إيقاف الاستثمار الخاص بك.")
+        await call.message.answer("تم إيقاف الاستثمار الخاص بك.")
     elif call.data == "market_status":
-        asyncio.ensure_future(send_market_status(call))
+        analysis = await market_analysis_summary()
+        await call.message.answer(analysis)
 
-    # ---------- قوائم المدير ----------
+    # --- Admin ---
     elif call.data.startswith("admin_"):
-        asyncio.ensure_future(handle_admin_callbacks(call))
+        await handle_admin_callbacks(call)
 
-async def send_market_status(call):
-    analysis = await market_analysis_summary()
-    await call.message.answer(analysis)
-
-async def handle_admin_callbacks(call):
+async def handle_admin_callbacks(call: types.CallbackQuery):
     if call.data == "admin_edit_bot_profit":
         await call.message.answer("أدخل نسبة ربح البوت الجديدة:")
     elif call.data == "admin_total_users":
@@ -70,7 +66,7 @@ async def handle_admin_callbacks(call):
     elif call.data == "admin_trade_as_user":
         await call.message.answer("أدخل بيانات المستخدم للتداول كمستخدم عادي:")
 
-# ----------------- وظائف مساعدة المدير -----------------
+# ----------------- Helpers -----------------
 async def get_total_users():
     session = SessionLocal()
     total = session.query(User).count()
@@ -78,12 +74,11 @@ async def get_total_users():
     return total
 
 async def get_online_users():
-    return 5  # مثال: يمكن تعديل حسب آخر تفاعل المستخدم
+    return 5
 
 async def get_bot_status():
     return "البوت يعمل بشكل طبيعي."
 
-# ----------------- حالة السوق وتحليل OpenAI -----------------
 async def market_analysis_summary():
     try:
         prompt = "اعرض ملخص سريع لحالة سوق العملات الرقمية مع نصائح استثمارية قصيرة."
