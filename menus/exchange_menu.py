@@ -5,7 +5,7 @@ def exchange_selection_keyboard() -> InlineKeyboardMarkup:
         "Binance", "Bybit", "KuCoin", "Huobi", "OKX",
         "Bitget", "Gate.io", "Kraken", "Coinbase", "Bitfinex"
     ]
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=name, callback_data=f"select_{name.lower()}")] for name in platforms]
-    )
+    kb = InlineKeyboardMarkup(row_width=1)  # كل زر في صف منفصل
+    for name in platforms:
+        kb.add(InlineKeyboardButton(text=name, callback_data=f"select_{name.lower()}"))
     return kb
