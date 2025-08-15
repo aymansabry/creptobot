@@ -1,6 +1,6 @@
 aiogram==2.25.1
-SQLAlchemy==2.0.20
-PyMySQL==1.1.0
-ccxt==4.2.55
-cryptography==41.0.3
-openai==1.31.0
+ccxt
+python-dotenv
+cryptography
+PyMySQL
+sqlalchemy
