@@ -5,20 +5,21 @@ from aiogram.utils import executor
 from config import BOT_TOKEN, ADMIN_ID, OPENAI_API_KEY
 from menus.user_menu import user_main_menu_keyboard
 from menus.admin_menu import admin_main_menu_keyboard
+from menus.exchange_menu import exchange_selection_keyboard
 from db.db_setup import SessionLocal, User
 from arbitrage import run_arbitrage, demo_arbitrage
 import openai
 
-# ----------------- Logging -----------------
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ----------------- إعداد البوت -----------------
+# إعداد البوت
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 openai.api_key = OPENAI_API_KEY
 
-# ----------------- الأحداث -----------------
+# ----------------- أحداث /start -----------------
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
@@ -26,12 +27,14 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer("مرحبًا! اختر عملية:", reply_markup=user_main_menu_keyboard())
 
+# ----------------- أحداث callback -----------------
 @dp.callback_query_handler(lambda call: True)
 async def callbacks(call: types.CallbackQuery):
-    await call.answer()  # مهم جدًا للـ aiogram 2
-    # ---------- قوائم المستخدم ----------
+    await call.answer()
+
+    # قوائم المستخدم
     if call.data == "user_manage_trading":
-        await call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول.")
+        await call.message.answer("اختر المنصة لإضافة أو تعديل بيانات التداول:", reply_markup=exchange_selection_keyboard())
     elif call.data == "user_start_investment":
         await call.message.answer("تشغيل الاستثمار الفعلي...")
         asyncio.create_task(run_arbitrage.run_arbitrage_for_all_users())
@@ -46,7 +49,7 @@ async def callbacks(call: types.CallbackQuery):
         analysis = await market_analysis_summary()
         await call.message.answer(analysis)
 
-    # ---------- قوائم المدير ----------
+    # قوائم المدير
     elif call.data.startswith("admin_"):
         await handle_admin_callbacks(call)
 
@@ -76,7 +79,7 @@ async def get_total_users():
     return total
 
 async def get_online_users():
-    return 5  # مثال: يمكن تعديل حسب آخر تفاعل المستخدم
+    return 5  # مثال
 
 async def get_bot_status():
     return "البوت يعمل بشكل طبيعي."
