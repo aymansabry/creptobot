@@ -1,93 +1,75 @@
+import os
 import asyncio
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from db.db_setup import SessionLocal, User, ExchangeCredential
-from arbitrage import run_arbitrage, demo_arbitrage
+import ccxt.async_support as ccxt
+from dotenv import load_dotenv
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_ID = 123456789  # عدل برقم المدير
-storage = MemoryStorage()
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot, storage=storage)
+load_dotenv()
 
-# ----------------- Logging -----------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+EXCHANGES = os.getenv("EXCHANGES", "binance,kucoin,bitget").split(",")
+TRADE_AMOUNT = float(os.getenv("TRADE_AMOUNT", 10))  # مبلغ التداول من المستخدم
+MIN_PROFIT_PCT = float(os.getenv("MIN_PROFIT_PCT", 0.2))
+LIVE_TRADE = os.getenv("LIVE_TRADE", "false").lower() == "true"
 
-# ----------------- States لتسجيل المنصات -----------------
-class PlatformRegistration(StatesGroup):
-    waiting_for_name = State()
-    waiting_for_api = State()
-    waiting_for_secret = State()
-    waiting_for_password = State()
+async def fetch_opportunities(exchange):
+    try:
+        markets = await exchange.load_markets()
+        cycles = []
+        symbols = [s for s in markets if s.endswith('/USDT')]
+        for base1 in symbols:
+            for base2 in symbols:
+                if base1 != base2:
+                    mid_symbol = f"{markets[base1]['base']}/{markets[base2]['base']}"
+                    if mid_symbol in markets:
+                        cycles.append((base1, mid_symbol, base2))
+        tasks = [check_cycle(exchange, c) for c in cycles]
+        await asyncio.gather(*tasks)
+    except Exception as e:
+        print(f"Error fetching opportunities on {exchange.id}: {e}")
 
-# ----------------- أوامر -----------------
-@dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.reply("مرحبًا بالمدير! استخدم الأوامر: /add_platform لتسجيل منصة، /run_arbitrage لتشغيل المراجحة.")
-    else:
-        await message.reply("مرحبًا! استخدم /add_platform لتسجيل منصة و /demo_investment لتجربة وهمية.")
+async def check_cycle(exchange, cycle):
+    try:
+        start, mid, end = cycle
+        o1 = await exchange.fetch_ticker(start)
+        o2 = await exchange.fetch_ticker(mid)
+        o3 = await exchange.fetch_ticker(end)
 
-# ----------------- تسجيل منصة -----------------
-@dp.message_handler(commands=['add_platform'])
-async def start_platform_registration(message: types.Message):
-    await message.reply("أدخل اسم المنصة:")
-    await PlatformRegistration.waiting_for_name.set()
+        # الأسعار
+        rate1 = o1['ask']
+        rate2 = o2['ask']
+        rate3 = o3['bid']
 
-@dp.message_handler(state=PlatformRegistration.waiting_for_name)
-async def platform_name_received(message: types.Message, state: FSMContext):
-    await state.update_data(name=message.text)
-    await message.reply("أدخل API Key للمنصة:")
-    await PlatformRegistration.waiting_for_api.set()
+        # حساب الربح
+        amount_a = TRADE_AMOUNT / rate1
+        amount_b = amount_a / rate2
+        final_amount = amount_b * rate3
+        profit_pct = ((final_amount - TRADE_AMOUNT) / TRADE_AMOUNT) * 100
 
-@dp.message_handler(state=PlatformRegistration.waiting_for_api)
-async def platform_api_received(message: types.Message, state: FSMContext):
-    await state.update_data(api_key=message.text)
-    await message.reply("أدخل Secret Key للمنصة:")
-    await PlatformRegistration.waiting_for_secret.set()
+        if profit_pct >= MIN_PROFIT_PCT:
+            print(f"[{exchange.id}] فرصة: {cycle} | ربح {profit_pct:.2f}%")
+            if LIVE_TRADE:
+                await execute_trade(exchange, cycle)
+    except Exception as e:
+        pass
 
-@dp.message_handler(state=PlatformRegistration.waiting_for_secret)
-async def platform_secret_received(message: types.Message, state: FSMContext):
-    await state.update_data(secret_key=message.text)
-    await message.reply("أدخل كلمة المرور الخاصة بالمنصة (اختياري):")
-    await PlatformRegistration.waiting_for_password.set()
+async def execute_trade(exchange, cycle):
+    print(f"تنفيذ الصفقة {cycle} على {exchange.id} بمبلغ {TRADE_AMOUNT} USDT")
+    # تنفيذ فعلي Placeholder
 
-@dp.message_handler(state=PlatformRegistration.waiting_for_password)
-async def platform_password_received(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    password = message.text if message.text else None
+async def main():
+    exchange_instances = []
+    for ex in EXCHANGES:
+        ex = ex.strip().lower()
+        if hasattr(ccxt, ex):
+            exchange_instances.append(getattr(ccxt, ex)({
+                'apiKey': os.getenv(f"{ex.upper()}_API_KEY"),
+                'secret': os.getenv(f"{ex.upper()}_API_SECRET"),
+                'password': os.getenv(f"{ex.upper()}_PASSWORD", None),
+            }))
 
-    session = SessionLocal()
-    credential = ExchangeCredential(
-        user_id=message.from_user.id,
-        exchange_name=data['name'],
-        api_key=data['api_key'],
-        secret_key=data['secret_key'],
-        password=password
-    )
-    session.add(credential)
-    session.commit()
-    session.close()
+    await asyncio.gather(*(fetch_opportunities(ex) for ex in exchange_instances))
 
-    await message.reply(f"تم تسجيل منصة {data['name']} بنجاح!")
-    await state.finish()
+    for ex in exchange_instances:
+        await ex.close()
 
-# ----------------- أوامر إضافية -----------------
-@dp.message_handler(commands=['run_arbitrage'])
-async def run_real_arbitrage(message: types.Message):
-    await message.reply("تشغيل المراجحة الفعلية لجميع المستخدمين...")
-    asyncio.create_task(run_arbitrage.run_arbitrage_for_all_users())
-
-@dp.message_handler(commands=['demo_investment'])
-async def run_demo_investment(message: types.Message):
-    await message.reply("تشغيل المراجحة الوهمية لجميع المستخدمين...")
-    asyncio.create_task(demo_arbitrage.run_demo_for_all_users())
-
-# ----------------- تشغيل البوت -----------------
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
