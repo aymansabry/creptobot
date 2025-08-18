@@ -1,31 +1,86 @@
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
-from . import models
+from config import Config
+from .models import User
+import logging
 
-def get_user(db: Session, user_id: str):
-    return db.query(models.User).filter(models.User.id == user_id).first()
+logger = logging.getLogger(__name__)
 
-def create_user(db: Session, user_data: dict):
-    db_user = models.User(**user_data)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+cipher = Fernet(Config.FERNET_KEY)
 
-def update_exchange_api(db: Session, user_id: str, exchange: str, api_data: dict):
-    db_api = db.query(models.ExchangeAPI).filter(
-        models.ExchangeAPI.user_id == user_id,
-        models.ExchangeAPI.exchange == exchange
-    ).first()
-    
-    if db_api:
-        for key, value in api_data.items():
-            setattr(db_api, key, value)
-    else:
-        db_api = models.ExchangeAPI(user_id=user_id, exchange=exchange, **api_data)
-        db.add(db_api)
-    
-    db.commit()
-    return db_api
+class CRUDUser:
+    @staticmethod
+    def get_user(db: Session, user_id: int):
+        """استرجاع مستخدم بواسطة ID"""
+        return db.query(User).filter(User.id == user_id).first()
 
-def get_sub_wallets(db: Session, user_id: str):
-    return db.query(models.SubWallet).filter(models.SubWallet.user_id == user_id).all()
+    @staticmethod
+    def create_or_update_user(
+        db: Session,
+        user_id: int,
+        api_key: str,
+        api_secret: str,
+        trade_percent: float = None
+    ):
+        """إنشاء أو تحديث مستخدم"""
+        try:
+            encrypted_api_key = cipher.encrypt(api_key.encode()).decode()
+            encrypted_api_secret = cipher.encrypt(api_secret.encode()).decode()
+            
+            user = CRUDUser.get_user(db, user_id)
+            
+            if user:
+                user.api_key = encrypted_api_key
+                user.api_secret = encrypted_api_secret
+                if trade_percent:
+                    user.trade_percent = trade_percent
+            else:
+                user = User(
+                    id=user_id,
+                    api_key=encrypted_api_key,
+                    api_secret=encrypted_api_secret,
+                    trade_percent=trade_percent or Config.TRADE_PERCENT
+                )
+                db.add(user)
+            
+            db.commit()
+            db.refresh(user)
+            return user
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error in create_or_update_user: {str(e)}")
+            raise
+
+    @staticmethod
+    def get_user_credentials(db: Session, user_id: int):
+        """استرجاع مفاتيح مستخدم مع فك التشفير"""
+        user = CRUDUser.get_user(db, user_id)
+        if not user:
+            return None
+            
+        try:
+            return {
+                'api_key': cipher.decrypt(user.api_key.encode()).decode(),
+                'secret_key': cipher.decrypt(user.api_secret.encode()).decode(),
+                'trade_percent': user.trade_percent,
+                'is_active': user.is_active
+            }
+        except InvalidToken:
+            logger.error(f"Invalid token for user {user_id}")
+            return None
+
+    @staticmethod
+    def update_trade_percent(db: Session, user_id: int, percent: float):
+        """تحديث نسبة التداول للمستخدم"""
+        user = CRUDUser.get_user(db, user_id)
+        if not user:
+            return False
+            
+        try:
+            user.trade_percent = percent
+            db.commit()
+            return True
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error updating trade percent: {str(e)}")
+            return False
