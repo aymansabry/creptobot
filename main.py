@@ -20,6 +20,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "القائمة الرئيسية:",
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     except Exception as e:
         logger.error(f"Error in start: {e}")
 
@@ -35,7 +36,8 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.edit_message_text(
                 text="اختر المنصة:",
-                reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         elif query.data == 'back':
             keyboard = [
                 [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
@@ -43,7 +45,8 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.edit_message_text(
                 text="القائمة الرئيسية:",
-                reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     except Exception as e:
         logger.error(f"Error in handle_buttons: {e}")
 
