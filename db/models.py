@@ -1,21 +1,18 @@
-from sqlalchemy import Column, String, Float, Boolean, Integer, DateTime
-from db.database import Base
-from datetime import datetime
+from sqlalchemy import Column, BigInteger, String, Float, Boolean, TIMESTAMP
+from sqlalchemy.sql import func
+from .database import Base
 
 class User(Base):
-    __tablename__ = 'users'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(String, unique=True, index=True)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    """نموذج جدول المستخدمين"""
+    __tablename__ = "users"
 
-class ExchangeAccount(Base):
-    __tablename__ = 'exchange_accounts'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)
-    exchange = Column(String)
-    api_key = Column(String)
-    api_secret = Column(String)
-    is_valid = Column(Boolean, default=False)
+    id = Column(BigInteger, primary_key=True, index=True)
+    api_key = Column(String, nullable=False)
+    api_secret = Column(String, nullable=False)
+    trade_percent = Column(Float, default=1.0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<User(id={self.id}, is_active={self.is_active})>"
