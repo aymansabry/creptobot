@@ -10,7 +10,7 @@ Base = declarative_base()
 
 def init_db():
     """تهيئة قاعدة البيانات وإنشاء الجداول"""
-    import db.models  # لا تحذف هذا السطر رغم أنه غير مستخدم مباشرة
+    import db.models  # لا تحذف هذا السطر
     Base.metadata.create_all(bind=engine)
 
 def get_db():
