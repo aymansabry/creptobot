@@ -1,6 +1,10 @@
+#main.py
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from config import Config
+import os
 
+# الدالة الخاصة بأمر /start
 async def start(update, context):
     keyboard = [
         [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
@@ -11,6 +15,7 @@ async def start(update, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# الدالة الخاصة بالتعامل مع الأزرار
 async def handle_buttons(update, context):
     query = update.callback_query
     await query.answer()
@@ -27,12 +32,17 @@ async def handle_buttons(update, context):
     elif query.data == 'back':
         await start(update, context)
 
+# الدالة الرئيسية لتشغيل البوت
 def main():
-    app = Application.builder().token("TOKEN").build()
+    # هنا تم التعديل
+    # بدل ما كان بياخد "TOKEN"، أصبح بيجيب التوكن من متغير البيئة
+    app = Application.builder().token(Config.BOT_TOKEN).build()
     
+    # إضافة المعالجات للأوامر والأزرار
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_buttons))
     
+    # تشغيل البوت
     app.run_polling()
 
 if __name__ == '__main__':
