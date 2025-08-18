@@ -1,24 +1,33 @@
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes
+)
 from config import Config
 import logging
 
+# إعداد التسجيل
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"✅ البوت يعمل بنجاح\n"
-        f"نسبة التداول: {Config.BOT_PERCENT}%\n"
-        f"حدود الاستثمار: {Config.MIN_INVEST}-{Config.MAX_INVEST} USDT"
-    )
+    """يعرض إعدادات البوت الحالية"""
+    await update.message.reply_text(Config.show_settings())
 
-def main():
-    app = Application.builder().token(Config.BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.run_polling()
+def setup_bot():
+    """تهيئة وتشغيل البوت"""
+    try:
+        app = Application.builder().token(Config.BOT_TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        
+        logging.info("جارٍ تشغيل البوت...")
+        app.run_polling()
+    except Exception as e:
+        logging.error(f"خطأ في تشغيل البوت: {e}")
+        exit(1)
 
 if __name__ == "__main__":
-    main()
+    setup_bot()
