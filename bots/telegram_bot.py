@@ -1,6 +1,5 @@
 import logging
-from telegram.ext import Updater, CommandHandler
-from core.exchanges.binance import BinanceExchange
+from telegram.ext import Application, CommandHandler
 from config import Config
 
 # إعدادات التسجيل
@@ -10,26 +9,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def start(update, context):
+async def start(update, context):
     """معالجة أمر /start"""
-    update.message.reply_text(
+    await update.message.reply_text(
         "🚀 بوت المراجحة الآلي يعمل بنجاح!\n"
         "أرسل /connect لربح حساب التبادل"
     )
 
 def main():
     """الدالة الرئيسية لتشغيل البوت"""
-    # تهيئة Updater بدون use_context
-    updater = Updater(Config.BOT_TOKEN)
-    
-    # إعداد معالجات الأوامر
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    
-    # بدء البوت
-    updater.start_polling()
-    logger.info("تم تشغيل البوت بنجاح")
-    updater.idle()
+    try:
+        application = Application.builder().token(Config.BOT_TOKEN).build()
+        
+        # إعداد معالجات الأوامر
+        application.add_handler(CommandHandler("start", start))
+        
+        # بدء البوت
+        logger.info("Starting bot...")
+        application.run_polling()
+        
+    except Exception as e:
+        logger.error(f"Bot failed to start: {e}")
 
 if __name__ == '__main__':
     main()
