@@ -1,49 +1,72 @@
-#main.py
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from config import Config
-import os
+import logging
 
-# الدالة الخاصة بأمر /start
-async def start(update, context):
-    keyboard = [
-        [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data='stats')]
-    ]
-    await update.message.reply_text(
-        "القائمة الرئيسية:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+# إعداد نظام التسجيل
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# الدالة الخاصة بالتعامل مع الأزرار
-async def handle_buttons(update, context):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'connect':
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
         keyboard = [
-            [InlineKeyboardButton("بينانس", callback_data='binance')],
-            [InlineKeyboardButton("🔙 رجوع", callback_data='back')]
+            [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
+            [InlineKeyboardButton("📊 الإحصائيات", callback_data='stats')]
         ]
-        await query.edit_message_text(
-            text="اختر المنصة:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    elif query.data == 'back':
-        await start(update, context)
+        # إذا كانت الرسالة من /start مباشرة
+        if update.message:
+            await update.message.reply_text(
+                "القائمة الرئيسية:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+        # إذا كانت من زر رجوع
+        else:
+            await update.callback_query.edit_message_text(
+                "القائمة الرئيسية:",
+                reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        logger.error(f"Error in start: {e}")
 
-# الدالة الرئيسية لتشغيل البوت
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        if query.data == 'connect':
+            keyboard = [
+                [InlineKeyboardButton("بينانس", callback_data='binance')],
+                [InlineKeyboardButton("🔙 رجوع", callback_data='back')]
+            ]
+            await query.edit_message_text(
+                text="اختر المنصة:",
+                reply_markup=InlineKeyboardMarkup(keyboard))
+                
+        elif query.data == 'back':
+            # استدعاء واجهة القائمة الرئيسية مع تعديل الرسالة الحالية
+            keyboard = [
+                [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
+                [InlineKeyboardButton("📊 الإحصائيات", callback_data='stats')]
+            ]
+            await query.edit_message_text(
+                text="القائمة الرئيسية:",
+                reply_markup=InlineKeyboardMarkup(keyboard))
+                
+    except Exception as e:
+        logger.error(f"Error in handle_buttons: {e}")
+
 def main():
-    # هنا تم التعديل
-    # بدل ما كان بياخد "TOKEN"، أصبح بيجيب التوكن من متغير البيئة
-    app = Application.builder().token(Config.BOT_TOKEN).build()
-    
-    # إضافة المعالجات للأوامر والأزرار
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_buttons))
-    
-    # تشغيل البوت
-    app.run_polling()
+    try:
+        app = Application.builder().token(Config.BOT_TOKEN).build()
+        
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CallbackQueryHandler(handle_buttons))
+        
+        app.run_polling(drop_pending_updates=True)
+        
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
 
 if __name__ == '__main__':
     main()
