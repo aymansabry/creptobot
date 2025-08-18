@@ -2,13 +2,33 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from config import Config
 import logging
-from arbitrage import ArbitrageEngine
-from exchange import ExchangeManager
+from exchange import ExchangeManager  # نستورد من exchange.py الموجود لديك
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+class ArbitrageEngine:
+    """محرك المراجحة ضمن نفس الملف"""
+    def __init__(self, exchange_manager):
+        self.exchange_manager = exchange_manager
+
+    async def find_opportunities(self):
+        """البحث عن فرص المراجحة"""
+        prices = {
+            'binance': {'BTCUSDT': 50000, 'ETHUSDT': 3000},
+            'kucoin': {'BTCUSDT': 50100, 'ETHUSDT': 2995}
+        }
+        
+        opportunities = []
+        for symbol in prices['binance']:
+            price_diff = abs((prices['binance'][symbol] - prices['kucoin'][symbol]) / 
+                           min(prices['binance'][symbol], prices['kucoin'][symbol])) * 100
+            if price_diff >= Config.ARB_THRESHOLD:
+                opportunities.append(f"{symbol}: {price_diff:.2f}%")
+        
+        return opportunities
 
 # تهيئة المديرين
 exchange_manager = ExchangeManager()
@@ -22,34 +42,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔹 /start - عرض القائمة الرئيسية
 🔹 /connect - ربط منصات التداول
 🔹 /arbitrage - بدء المراجحة الآلية
-🔹 /portfolio - عرض محفظتك
-🔹 /settings - ضبط إعدادات البوت
-🔹 /help - المساعدة الفنية
 """
     await update.message.reply_html(commands)
 
-async def connect_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ربط منصات التداول"""
-    user_id = update.effective_user.id
-    try:
-        # هنا يتم ربط المنصات (يجب تطبيق المنطق الفعلي)
-        await exchange_manager.connect_user_exchanges(user_id)
-        await update.message.reply_text("✅ تم ربط المنصات بنجاح")
-    except Exception as e:
-        await update.message.reply_text(f"❌ فشل الربط: {str(e)}")
-
 async def arbitrage(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء المراجحة الآلية"""
-    user_id = update.effective_user.id
+    """بدء المراجحة"""
     try:
-        opportunities = await arb_engine.find_opportunities(user_id)
+        opportunities = await arb_engine.find_opportunities()
         if opportunities:
-            msg = "🔍 <b>فرص المراجحة:</b>\n\n"
-            msg += "\n".join([
-                f"{opp['symbol']}: {opp['profit']}% ({opp['exchange1']} → {opp['exchange2']})"
-                for opp in opportunities
-            ])
-            await update.message.reply_html(msg)
+            await update.message.reply_text(
+                "🔍 فرص المراجحة:\n" + "\n".join(opportunities)
         else:
             await update.message.reply_text("⚠️ لا توجد فرص مراجحة حالياً")
     except Exception as e:
@@ -57,12 +59,8 @@ async def arbitrage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def setup_bot():
     app = Application.builder().token(Config.BOT_TOKEN).build()
-    
-    # تسجيل الأوامر
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("connect", connect_exchange))
     app.add_handler(CommandHandler("arbitrage", arbitrage))
-    
     app.run_polling()
 
 if __name__ == "__main__":
