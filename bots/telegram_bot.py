@@ -1,39 +1,44 @@
-from telegram.ext import Updater, CommandHandler, MessageHandler, filters
-from core.exchanges import BinanceExchange
-from db import crud, database
 import logging
+from telegram.ext import Updater, CommandHandler
+from core.exchanges import BinanceExchange  # الآن سيعمل بعد تعديل __init__.py
+from config import Config
 
-logging.basicConfig(level=logging.INFO)
+# إعدادات التسجيل
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 def start(update, context):
-    update.message.reply_text('مرحباً بكم في بوت المراجحة الآلي')
+    """معالجة أمر /start"""
+    update.message.reply_text(
+        "مرحباً! بوت المراجحة الآلي جاهز للعمل.\n"
+        "أرسل /connect لربح حسابك"
+    )
 
-def handle_api_keys(update, context):
-    user_id = update.message.from_user.id
-    text = update.message.text
-    
+def connect_exchange(update, context):
+    """معالجة ربط حساب التبادل"""
     try:
-        exchange, api_key, api_secret = text.split()
-        with database.SessionLocal() as db:
-            crud.update_exchange_api(db, user_id, exchange, {
-                'api_key': api_key,
-                'api_secret': api_secret,
-                'is_valid': True
-            })
-        update.message.reply_text(f'تم تحديث مفاتيح {exchange} بنجاح')
+        # اختبار عمل BinanceExchange
+        test_exchange = BinanceExchange("test_key", "test_secret")
+        update.message.reply_text("تم تهيئة وحدة التبادل بنجاح!")
     except Exception as e:
-        logger.error(f"API key update error: {e}")
-        update.message.reply_text('خطأ في إدخال المفاتيح')
+        logger.error(f"Exchange init error: {e}")
+        update.message.reply_text("حدث خطأ في تهيئة وحدة التبادل")
 
 def main():
-    updater = Updater(Config.BOT_TOKEN)
+    """الدالة الرئيسية لتشغيل البوت"""
+    updater = Updater(Config.BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
-    
+
+    # تسجيل معالجات الأوامر
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_api_keys))
-    
+    dp.add_handler(CommandHandler("connect", connect_exchange))
+
+    # بدء البوت
     updater.start_polling()
+    logger.info("Bot started successfully")
     updater.idle()
 
 if __name__ == '__main__':
