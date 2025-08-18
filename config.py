@@ -6,40 +6,35 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Config:
-    # Telegram Configuration
-    TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+    # Telegram
+    BOT_TOKEN = os.getenv('BOT_TOKEN')
     
-    # OpenAI Configuration
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    # OpenAI
+    OPENAI_API = os.getenv('OPENAI_API')
     
     # Encryption
     FERNET_KEY = os.getenv('FERNET_KEY')
     
     # Trading Parameters
-    TRADE_PERCENT = float(os.getenv('BOT_PERCENT', '1.0'))  # Default 1%
-    MIN_INVEST_AMOUNT = float(os.getenv('MIN_INVEST_AMOUNT', '10.0'))
-    MAX_INVEST_AMOUNT = float(os.getenv('MAX_INVEST_AMOUNT', '1000.0'))
+    BOT_PERCENT = float(os.getenv('BOT_PERCENT', '1.0'))
+    MIN_INVEST = float(os.getenv('MIN_INVEST_AMOUNT', '10.0'))
+    MAX_INVEST = float(os.getenv('MAX_INVEST_AMOUNT', '1000.0'))
     
     # Database
     DATABASE_URL = os.getenv('DATABASE_URL')
     
     @classmethod
     def validate(cls):
-        required_vars = {
-            'TELEGRAM_BOT_TOKEN': 'Telegram Bot Token',
-            'OPENAI_API_KEY': 'OpenAI API Key',
-            'FERNET_KEY': 'Fernet Encryption Key',
-            'DATABASE_URL': 'Database Connection URL'
-        }
+        required = ['BOT_TOKEN', 'OPENAI_API', 'FERNET_KEY', 'DATABASE_URL']
+        missing = [var for var in required if not getattr(cls, var)]
         
-        missing = [name for name, desc in required_vars.items() if not os.getenv(name)]
         if missing:
-            error_msg = f"Missing required environment variables: {', '.join(missing)}"
+            error_msg = f"Missing env vars: {', '.join(missing)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
         
         try:
-            Fernet(cls.FERNET_KEY)
+            Fernet(cls.FERNET_KEY)  # Validate encryption key
         except Exception as e:
             logger.error(f"Invalid FERNET_KEY: {str(e)}")
             raise
