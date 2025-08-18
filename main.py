@@ -1,3 +1,4 @@
+# main.py
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from config import Config
@@ -16,16 +17,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
             [InlineKeyboardButton("📊 الإحصائيات", callback_data='stats')]
         ]
-        # إذا كانت الرسالة من /start مباشرة
-        if update.message:
-            await update.message.reply_text(
-                "القائمة الرئيسية:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-        # إذا كانت من زر رجوع
-        else:
-            await update.callback_query.edit_message_text(
-                "القائمة الرئيسية:",
-                reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(
+            "القائمة الرئيسية:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     except Exception as e:
         logger.error(f"Error in start: {e}")
 
@@ -41,18 +36,17 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.edit_message_text(
                 text="اختر المنصة:",
-                reply_markup=InlineKeyboardMarkup(keyboard))
-                
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         elif query.data == 'back':
-            # استدعاء واجهة القائمة الرئيسية مع تعديل الرسالة الحالية
             keyboard = [
                 [InlineKeyboardButton("🔄 ربط الحسابات", callback_data='connect')],
                 [InlineKeyboardButton("📊 الإحصائيات", callback_data='stats')]
             ]
             await query.edit_message_text(
                 text="القائمة الرئيسية:",
-                reply_markup=InlineKeyboardMarkup(keyboard))
-                
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     except Exception as e:
         logger.error(f"Error in handle_buttons: {e}")
 
