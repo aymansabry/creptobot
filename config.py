@@ -1,25 +1,47 @@
 import os
-from dotenv import load_dotenv
+from cryptography.fernet import Fernet
+import logging
 
-load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Config:
-    # إعدادات البوت
-    BOT_TOKEN = os.getenv('BOT_TOKEN')
-    ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '').split(',') if x]
+    # Telegram Configuration
+    TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     
-    # التشفير
+    # OpenAI Configuration
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    
+    # Encryption
     FERNET_KEY = os.getenv('FERNET_KEY')
     
-    # التداول
-    MAX_TRADE = float(os.getenv('MAX_TRADE', 5000))
-    MIN_TRADE = float(os.getenv('MIN_TRADE', 1))
-    BOT_PERCENT = float(os.getenv('BOT_PERCENT', 0.003))
-    BOT_WALLET = os.getenv('BOT_WALLET')
+    # Trading Parameters
+    TRADE_PERCENT = float(os.getenv('BOT_PERCENT', '1.0'))  # Default 1%
+    MIN_INVEST_AMOUNT = float(os.getenv('MIN_INVEST_AMOUNT', '10.0'))
+    MAX_INVEST_AMOUNT = float(os.getenv('MAX_INVEST_AMOUNT', '1000.0'))
     
-    # قاعدة البيانات
+    # Database
     DATABASE_URL = os.getenv('DATABASE_URL')
     
-    # الأمان
-    MAX_SLIPPAGE = 0.005
-    MIN_PROFIT = 0.002
+    @classmethod
+    def validate(cls):
+        required_vars = {
+            'TELEGRAM_BOT_TOKEN': 'Telegram Bot Token',
+            'OPENAI_API_KEY': 'OpenAI API Key',
+            'FERNET_KEY': 'Fernet Encryption Key',
+            'DATABASE_URL': 'Database Connection URL'
+        }
+        
+        missing = [name for name, desc in required_vars.items() if not os.getenv(name)]
+        if missing:
+            error_msg = f"Missing required environment variables: {', '.join(missing)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        try:
+            Fernet(cls.FERNET_KEY)
+        except Exception as e:
+            logger.error(f"Invalid FERNET_KEY: {str(e)}")
+            raise
+
+Config.validate()
