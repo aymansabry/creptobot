@@ -3,4 +3,4 @@ python-dotenv
 ccxt
 mysql-connector-python
 python-telegram-bo
-python-binance
+python-binance==1.0.15
