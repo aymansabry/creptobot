@@ -1,6 +1,5 @@
-aiogram==3.0.0b7
-python-dotenv
-ccxt
-mysql-connector-python
-python-telegram-bo
-python-binance==1.0.15
+python-telegram-bot==13.15
+mysql-connector-python==8.0.33
+python-dotenv==1.0.0
+requests==2.31.0
+schedule==1.2.1
