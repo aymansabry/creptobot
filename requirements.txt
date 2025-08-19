@@ -1,9 +1,4 @@
-aiogram==2.25.1
-ccxt
+aiogram==3.0.0b7
 python-dotenv
-cryptography
-PyMySQL
-sqlalchemy
-python-telegram-bot==20.3
-psycopg2-binary==2.9.9
-aiohttp==3.8.6
+ccxt
+mysql-connector-python
