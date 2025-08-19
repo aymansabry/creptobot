@@ -2,4 +2,5 @@ aiogram==3.0.0b7
 python-dotenv
 ccxt
 mysql-connector-python
-python-telegram-bot
+python-telegram-bo
+python-binance==1.0.15
