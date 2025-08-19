@@ -1,21 +1,35 @@
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
-from handlers import start, button_handler
-from db import init_db
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
 import os
 from dotenv import load_dotenv
 
+# تحميل متغيرات البيئة
 load_dotenv()
-init_db()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# أمر /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("أهلاً بيك يا زيوس! البوت شغال 🔥")
+
+# استقبال أي رسالة نصية
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"أنت كتبت: {update.message.text}")
+
+# تشغيل التطبيق
 def main():
-    updater = Updater(os.getenv("BOT_TOKEN"), use_context=True)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
