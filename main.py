@@ -1,40 +1,19 @@
-# main.py
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
-from migrate_db import migrate
-from handlers.start import start
-from handlers.invest import handle_invest
-from handlers.withdraw import handle_withdraw
-from handlers.plans import handle_plan_selection, plan_callback
-from handlers.admin import handle_admin_panel
-from services.auto_invest import run_auto_invest
-from config import BOT_TOKEN
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
+from bot.handlers import main_menu
+from bot.arbitrage_callback import handle_run_arbitrage
 
-# 🧱 تهيئة قاعدة البيانات تلقائيًا
-migrate()
+def start(update, context):
+    update.message.reply_text("👋 مرحبًا بك! اختر من القائمة:", reply_markup=main_menu())
 
-# 🚀 تشغيل الاستثمار التلقائي (يمكنك ربطه بـ scheduler لاحقًا)
-run_auto_invest()
+def main():
+    updater = Updater("YOUR_BOT_TOKEN", use_context=True)
+    dp = updater.dispatcher
 
-# 🧠 إعداد البوت
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(handle_run_arbitrage, pattern='^run_arbitrage$'))
 
-# 🧭 أوامر المستخدم
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("invest", handle_invest))
-app.add_handler(CommandHandler("withdraw", handle_withdraw))
-app.add_handler(CommandHandler("plans", handle_plan_selection))
-app.add_handler(CommandHandler("admin", handle_admin_panel))
+    updater.start_polling()
+    updater.idle()
 
-# 📲 أزرار اختيار الخطة
-app.add_handler(CallbackQueryHandler(plan_callback))
-
-# ✅ تشغيل البوت
-if __name__ == "__main__":
-    print("✅ Bot is running...")
-    app.run_polling()
+if __name__ == '__main__':
+    main()
