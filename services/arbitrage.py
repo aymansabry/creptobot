@@ -1,50 +1,41 @@
 import ccxt
-from database.models import get_user_exchanges, log_arbitrage, update_user_balance
-from services.profit_calculator import calculate_profit
-from config import BOT_SHARE_PERCENT
+from db import get_user_exchanges, get_user_wallet, log_arbitrage, update_wallet
+from utils import calculate_profit, check_balance, get_fee
 
-async def start_arbitrage(user_id):
+def execute_arbitrage(user_id):
     exchanges = get_user_exchanges(user_id)
-    if not exchanges:
-        return {"success": False, "error": "لا توجد منصات مفعلة"}
+    wallet = get_user_wallet(user_id)
 
-    # مثال: مراجحة ثلاثية بين BTC/ETH/USDT
+    opportunity = find_best_opportunity(exchanges)
+    if not opportunity:
+        return "لا توجد فرصة مناسبة الآن"
+
+    symbol = opportunity['symbol']
+    amount = opportunity['amount']
+    buy_ex = exchanges[opportunity['buy_exchange']]
+    sell_ex = exchanges[opportunity['sell_exchange']]
+
+    # تحقق من الرصيد
+    if not check_balance(buy_ex, symbol, amount, side='BUY') or not check_balance(sell_ex, symbol, amount, side='SELL'):
+        return "الرصيد غير كافي لتنفيذ الصفقة"
+
+    # تنفيذ أوامر السوق
     try:
-        prices = {}
-        for ex in exchanges:
-            client = ccxt.__getattr__(ex["name"])({
-                'apiKey': ex["api_key"],
-                'secret': ex["secret"],
-                'password': ex.get("passphrase", "")
-            })
-            prices[ex["name"]] = {
-                "BTCETH": client.fetch_ticker("BTC/ETH")["ask"],
-                "ETHUSDT": client.fetch_ticker("ETH/USDT")["ask"],
-                "BTCUSDT": client.fetch_ticker("BTC/USDT")["bid"]
-            }
-
-        # حساب الفروقات
-        for name, p in prices.items():
-            path = f"{name}: BTC→ETH→USDT→BTC"
-            start = 1  # 1 BTC
-            eth = start / p["BTCETH"]
-            usdt = eth * p["ETHUSDT"]
-            final_btc = usdt / p["BTCUSDT"]
-            profit = final_btc - start
-
-            if profit > 0:
-                net_profit = profit * (1 - BOT_SHARE_PERCENT / 100)
-                update_user_balance(user_id, net_profit)
-                log_arbitrage(user_id, path, profit)
-                return {"success": True, "profit": net_profit, "path": path}
-
-        return {"success": False, "error": "لا توجد فرص مراجحة حالياً"}
-
+        buy_order = buy_ex.create_market_buy_order(symbol, amount)
+        sell_order = sell_ex.create_market_sell_order(symbol, amount)
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return f"فشل في تنفيذ الأوامر: {str(e)}"
 
-async def stop_arbitrage(user_id):
-    # مجرد علامة توقف في قاعدة البيانات
-    from database.models import disable_user_trading
-    disable_user_trading(user_id)
-    return {"success": True}
+    # حساب الربح الصافي
+    buy_price = buy_order['average']
+    sell_price = sell_order['average']
+    fee = get_fee(buy_order, sell_order)
+    profit = calculate_profit(buy_price, sell_price, amount) - fee
+
+    # تسجيل الصفقة
+    log_arbitrage(user_id, opportunity, profit)
+
+    # تحديث المحفظة
+    update_wallet(user_id, profit)
+
+    return f"✅ تم تنفيذ الصفقة بنجاح وربح {profit:.2f} USDT"
