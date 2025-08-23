@@ -3,7 +3,8 @@ import asyncio
 import logging
 from binance.client import AsyncClient
 from binance.exceptions import BinanceAPIException
-from db import save_last_trade, get_user_api_keys
+# Corrected import name: save_last_trades instead of save_last_trade
+from db import save_last_trades, get_user_api_keys
 from decimal import Decimal, getcontext
 
 # Set precision for Decimal calculations
@@ -99,7 +100,8 @@ async def start_arbitrage(user_id):
 
             # Simulate profit for the example
             profit_usd = Decimal('0.00123')
-            save_last_trade(user_id, symbol, profit_usd, datetime.utcnow())
+            # Corrected function call: save_last_trades
+            save_last_trades(user_id, symbol, profit_usd, datetime.utcnow())
             
         except Exception as e:
             logger.error(f"Arbitrage attempt failed: {e}")
