@@ -49,7 +49,7 @@ def _kbd_settings():
     )
 
 # ====== Command Handlers ======
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await create_user(user.id)
     await update.message.reply_text(
@@ -190,13 +190,13 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     # Add handlers
-    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     logger.info("🤖 البوت يعمل الآن...")
-    app.run_polling()
+    app.run_polling(poll_interval=1.0)
 
 if __name__ == "__main__":
     main()
