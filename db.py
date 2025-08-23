@@ -1,3 +1,4 @@
+# db.py
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -5,8 +6,7 @@ from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
 
 # قراءة عنوان قاعدة البيانات من متغيرات البيئة.
-# إذا لم يكن موجودًا، سيتم استخدام قاعدة بيانات SQLite محلية
-# ملاحظة: يجب عليك تعيين متغير بيئة يسمى DATABASE_URL
+# إذا لم يكن موجودًا، سيتم استخدام قاعدة بيانات SQLite محلية.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trading_bot.db")
 
 engine = create_engine(DATABASE_URL)
