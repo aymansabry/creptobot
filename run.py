@@ -139,8 +139,21 @@ def upgrade_database():
             Base.metadata.create_all(engine)
             logger.info("Tables created successfully.")
             return
+
         with engine.connect() as conn:
             cols = [c['name'] for c in inspector.get_columns('users')]
+            if 'base_investment' not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN base_investment FLOAT DEFAULT 0.0"))
+                logger.info("Added 'base_investment' column to 'users' table.")
+            if 'investment_status' not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN investment_status VARCHAR(20) DEFAULT 'stopped'"))
+                logger.info("Added 'investment_status' column to 'users' table.")
+            if 'daily_profit' not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN daily_profit FLOAT DEFAULT 0.0"))
+                logger.info("Added 'daily_profit' column to 'users' table.")
+            if 'total_profit' not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN total_profit FLOAT DEFAULT 0.0"))
+                logger.info("Added 'total_profit' column to 'users' table.")
             if 'trading_mode' not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN trading_mode VARCHAR(20) DEFAULT 'triangular'"))
                 logger.info("Added 'trading_mode' column to 'users' table.")
