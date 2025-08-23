@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Set, Any, Union
 from contextlib import contextmanager
 
+# -----------------
+# Importing essential libraries
+# -----------------
 import ccxt
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float,
@@ -15,20 +18,20 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.utils.exceptions import ChatNotFound
+# New path for MemoryStorage in modern aiogram
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramAPIError
 
 # -----------------
-# إعدادات البوت الأساسية
+# Core Bot & Logging Setup
 # -----------------
-# قم بتعيين BOT_TOKEN في متغيرات البيئة قبل تشغيل البوت
+# Set BOT_TOKEN as an environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("يجب تعيين BOT_TOKEN كمتغير بيئة")
+    raise ValueError("BOT_TOKEN must be set as an environment variable.")
 
-# إعدادات الـ Logging لتتبع الأخطاء
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -36,19 +39,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# إعداد البوت
+# Initialize the Bot and Dispatcher
 bot = Bot(token=BOT_TOKEN, parse_mode='HTML')
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 # -----------------
-# إعداد قاعدة البيانات
+# Database Models & Setup
 # -----------------
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///arbitrage.db")
 Base = declarative_base()
 
 class User(Base):
-    """جدول المستخدمين في قاعدة البيانات"""
+    """Database table for users."""
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, index=True)
@@ -62,7 +65,7 @@ class User(Base):
     exchanges = relationship("ExchangeCredential", back_populates="user", cascade="all, delete-orphan")
 
 class ExchangeCredential(Base):
-    """جدول بيانات المنصات للمستخدمين"""
+    """Database table for user's exchange credentials."""
     __tablename__ = "exchange_credentials"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -73,7 +76,7 @@ class ExchangeCredential(Base):
     user = relationship("User", back_populates="exchanges")
 
 class Trade(Base):
-    """جدول لتسجيل الصفقات الناجحة"""
+    """Database table for successful trades."""
     __tablename__ = "trades"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
@@ -91,7 +94,7 @@ class Trade(Base):
     user = relationship("User", backref="trades")
 
 class RejectedTrade(Base):
-    """جدول لتسجيل الصفقات المرفوضة أو الفاشلة"""
+    """Database table for rejected or failed trades."""
     __tablename__ = "rejected_trades"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
@@ -104,7 +107,7 @@ class RejectedTrade(Base):
     user = relationship("User", backref="rejected_trades")
 
 class MarketData(Base):
-    """جدول لتخزين بيانات السوق للحصول السريع على الحدود والعمولات"""
+    """Table for storing market data to reduce API calls."""
     __tablename__ = "market_data"
     id = Column(Integer, primary_key=True)
     symbol = Column(String(50), unique=True, index=True)
@@ -119,7 +122,7 @@ SessionLocal = sessionmaker(bind=engine)
 
 @contextmanager
 def db_session():
-    """يوفر سياقًا للمعاملات لقاعدة البيانات"""
+    """Provides a transactional scope around a series of operations."""
     db = SessionLocal()
     try:
         yield db
@@ -131,39 +134,37 @@ def db_session():
         db.close()
 
 def upgrade_database():
-    """إنشاء الجداول في قاعدة البيانات إذا لم تكن موجودة"""
+    """Checks for database tables and creates them if they don't exist."""
     try:
         inspector = sa_inspect(engine)
         if not inspector.has_table("users"):
             Base.metadata.create_all(engine)
-            logger.info("تم إنشاء الجداول بنجاح.")
+            logger.info("Tables created successfully.")
             return
-
         with engine.connect() as conn:
             cols = [c['name'] for c in inspector.get_columns('users')]
             if 'trading_mode' not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN trading_mode VARCHAR(20) DEFAULT 'triangular'"))
-                logger.info("تم إضافة عمود 'trading_mode' إلى جدول 'users'.")
+                logger.info("Added 'trading_mode' column to 'users' table.")
             if 'risk_level' not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN risk_level VARCHAR(20) DEFAULT 'medium'"))
-                logger.info("تم إضافة عمود 'risk_level' إلى جدول 'users'.")
+                logger.info("Added 'risk_level' column to 'users' table.")
             if not inspector.has_table("market_data"):
                 MarketData.__table__.create(engine)
-                logger.info("تم إنشاء جدول 'market_data'.")
+                logger.info("Created 'market_data' table.")
             conn.commit()
     except Exception as e:
-        logger.error(f"خطأ أثناء تحديث قاعدة البيانات: {e}")
+        logger.error(f"Error during database upgrade: {e}")
 
 # -----------------
-# منطق التداول
+# Trading Logic & Utilities
 # -----------------
-# ثوابت التداول
-BNB_FEE_PERCENT = 0.001
+# Trading constants
 MIN_PROFIT_PERCENT = 0.05
 REQUEST_DELAY = 0.3
-ARBITRAGE_CYCLE = 45 # ثواني
+ARBITRAGE_CYCLE = 45 # Seconds
 
-# المسارات المتاحة للتداول
+# Supported arbitrage paths
 TRIANGULAR_PATHS = [
     ("TRX/USDT", "TRX/BNB", "BNB/USDT"),
     ("WIN/USDT", "WIN/BNB", "BNB/USDT"),
@@ -180,7 +181,7 @@ PENTA_PATHS = [
 ]
 
 class RetryManager:
-    """إدارة إعادة المحاولة للطلبات الفاشلة"""
+    """Manages retries for failed API requests."""
     def __init__(self, max_attempts=3, base_delay=1, max_delay=30):
         self.max_attempts = max_attempts
         self.base_delay = base_delay
@@ -198,15 +199,15 @@ class RetryManager:
             except (ccxt.NetworkError, ccxt.ExchangeError, asyncio.TimeoutError) as e:
                 last_exception = e
                 delay = min(self.base_delay * (2 ** attempt), self.max_delay)
-                logger.warning(f"المحاولة {attempt + 1} فشلت، إعادة المحاولة بعد {delay} ثانية: {str(e)}")
+                logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay} seconds: {str(e)}")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f"خطأ غير متوقع: {str(e)}")
+                logger.error(f"Unexpected error in execute_with_retry: {str(e)}")
                 raise e
-        raise last_exception if last_exception else Exception("فشلت كل المحاولات")
+        raise last_exception if last_exception else Exception("Failed after all attempts")
 
 class MarketCache:
-    """تخزين مؤقت لبيانات السوق لتجنب الطلبات المتكررة"""
+    """Caches market data to reduce API calls."""
     def __init__(self, ttl_minutes=30):
         self.cache = {}
         self.ttl = timedelta(minutes=ttl_minutes)
@@ -218,7 +219,7 @@ class MarketCache:
             try:
                 markets = await asyncio.to_thread(exchange.load_markets)
                 self.cache[exchange_id] = {'markets': markets, 'timestamp': now}
-                logger.info(f"تم تحميل {len(markets)} سوقًا لمنصة {exchange_id}")
+                logger.info(f"Loaded {len(markets)} markets for {exchange_id}")
                 with db_session() as db:
                     for symbol, market in markets.items():
                         market_data = db.query(MarketData).filter_by(symbol=symbol).first() or MarketData(symbol=symbol)
@@ -234,7 +235,7 @@ class MarketCache:
                         db.add(market_data)
             except Exception as e:
                 if exchange_id in self.cache:
-                    logger.warning(f"استخدام البيانات المخزنة مؤقتًا بسبب خطأ: {str(e)}")
+                    logger.warning(f"Using cached market data due to error: {str(e)}")
                     return self.cache[exchange_id]['markets']
                 raise e
         return self.cache[exchange_id]['markets']
@@ -243,7 +244,7 @@ retry_manager = RetryManager()
 market_cache = MarketCache()
 
 async def get_exchange(user_id: int) -> Optional[ccxt.Exchange]:
-    """ينشئ كائن ccxt للمنصة المحددة"""
+    """Creates a ccxt object for the specified exchange."""
     with db_session() as db:
         user = db.query(User).filter_by(telegram_id=user_id).first()
         if not user or not user.exchanges:
@@ -264,20 +265,20 @@ async def get_exchange(user_id: int) -> Optional[ccxt.Exchange]:
             await market_cache.get_markets(exchange)
             return exchange
         except Exception as e:
-            logger.error(f"فشل في تحميل الأسواق: {str(e)}")
+            logger.error(f"Failed to load markets: {str(e)}")
             return None
 
 async def check_balance(exchange, currency: str = 'USDT') -> float:
-    """يتحقق من رصيد عملة معينة"""
+    """Checks the balance of a specific currency."""
     try:
         balance = await retry_manager.execute_with_retry(exchange.fetch_free_balance)
         return float(balance.get(currency, 0.0))
     except Exception as e:
-        logger.error(f"خطأ في جلب الرصيد: {str(e)}")
+        logger.error(f"Error fetching balance: {str(e)}")
         return 0.0
 
 async def check_arbitrage_path(exchange, path: Tuple[str, ...], quote_amount: float) -> Optional[float]:
-    """يحلل مسار المراجحة ويحسب الربح المحتمل"""
+    """Analyzes an arbitrage path and calculates the potential profit."""
     try:
         current_prices = {}
         for symbol in path:
@@ -288,23 +289,22 @@ async def check_arbitrage_path(exchange, path: Tuple[str, ...], quote_amount: fl
 
         amt = decimal.Decimal(str(quote_amount))
         for symbol in path:
-            base, quote = symbol.split('/')
-            fee = decimal.Decimal(str(exchange.markets[symbol]['taker']))
+            # Simplified logic for demonstration
             price = decimal.Decimal(str(current_prices[symbol]))
-            if '/USDT' in symbol: # assuming first leg is always from USDT
-                amt = (amt / price) * (decimal.Decimal('1') - fee)
+            if '/USDT' in symbol:
+                amt = (amt / price) * (decimal.Decimal('1') - decimal.Decimal(str(exchange.markets[symbol]['taker'])))
             else:
-                amt = (amt * price) * (decimal.Decimal('1') - fee)
+                amt = (amt * price) * (decimal.Decimal('1') - decimal.Decimal(str(exchange.markets[symbol]['taker'])))
 
         final_amount = float(amt)
         net_profit = final_amount - quote_amount
         return net_profit if net_profit > 0 else None
     except Exception as e:
-        logger.error(f"خطأ في تحليل المسار {path}: {str(e)}")
+        logger.error(f"Error analyzing path {path}: {str(e)}")
         return None
 
 async def execute_arbitrage(user_id: int, path: Tuple[str, ...], quote_amount: float, bot_instance) -> bool:
-    """ينفذ صفقة المراجحة على المنصة"""
+    """Executes the arbitrage trade on the exchange."""
     exchange = await get_exchange(user_id)
     if not exchange: return False
     
@@ -312,131 +312,122 @@ async def execute_arbitrage(user_id: int, path: Tuple[str, ...], quote_amount: f
     trade_summary = []
     
     try:
-        trade_summary.append(f"🔄 بدء صفقة مراجحة على المسار: {' → '.join(path)}")
+        trade_summary.append(f"🔄 Starting arbitrage trade on path: {' → '.join(path)}")
 
         for i, symbol in enumerate(path):
             await asyncio.sleep(REQUEST_DELAY)
-            base, quote = symbol.split('/')
             
-            # Simplified execution logic (requires robust implementation)
-            if i == 0:  # First leg: buy with USDT
-                order_type = 'buy'
+            # This is a simplified example. Real-world logic needs to be more robust.
+            if i == 0:
                 price = float((await retry_manager.execute_with_retry(exchange.fetch_ticker, symbol))['ask'])
                 amount_to_buy = current_amount / price
                 order = await retry_manager.execute_with_retry(exchange.create_market_buy_order, symbol, amount_to_buy)
-            else: # Other legs: sell to the next currency in the path
-                order_type = 'sell'
+            else:
                 order = await retry_manager.execute_with_retry(exchange.create_market_sell_order, symbol, current_amount)
 
             if not order or order.get('status') != 'closed':
-                raise Exception(f"فشلت الصفقة عند {symbol}")
+                raise Exception(f"Trade failed at {symbol}")
             
             filled_amount = float(order.get('filled', 0))
             if filled_amount <= 0:
-                raise Exception(f"لم يتم تنفيذ أي جزء من الصفقة عند {symbol}")
+                raise Exception(f"Order filled 0 at {symbol}")
 
             current_amount = float(order.get('cost', 0))
-            trade_summary.append(f"✅ تم تنفيذ: {order_type} {symbol}، الكمية: {filled_amount:.6f}")
+            trade_summary.append(f"✅ Executed: {'sell' if i > 0 else 'buy'} {symbol} with amount {filled_amount:.6f}")
 
         profit = current_amount - quote_amount
-        trade_summary.append(f"🎉 تم بنجاح! الربح: {profit:.6f} USDT")
+        trade_summary.append(f"🎉 Success! Profit: {profit:.6f} USDT")
         
         with db_session() as db:
             user = db.query(User).filter_by(telegram_id=user_id).first()
             if user:
                 user.total_profit += profit
-                db.add(Trade(
-                    user_id=user.id,
-                    pair="->".join(path),
-                    amount=quote_amount,
-                    profit=profit,
-                    details=" | ".join(trade_summary)
-                ))
+                db.add(Trade(user_id=user.id, pair="->".join(path), amount=quote_amount, profit=profit, details=" | ".join(trade_summary)))
         
         await bot_instance.send_message(user_id, "\n".join(trade_summary))
         return True
 
     except Exception as e:
-        await bot_instance.send_message(user_id, f"❌ خطأ أثناء تنفيذ الصفقة: {str(e)}")
+        await bot_instance.send_message(user_id, f"❌ An error occurred during trade execution: {str(e)}")
         return False
 
 # -----------------
-# دورة التداول
+# Main Trading Loop
 # -----------------
 async def enhanced_trading_cycle(user_id: int, bot_instance):
-    """
-    الدورة الرئيسية للتداول.
-    تستمر في العمل حتى يقوم المستخدم بإيقافها.
-    """
+    """The main trading loop that runs continuously."""
     try:
+        while True: # Loop indefinitely until user stops it
+            with db_session() as db:
+                user = db.query(User).filter_by(telegram_id=user_id).first()
+                if not user or user.investment_status != "running":
+                    logger.info(f"Stopping trading cycle for user {user_id}.")
+                    break # Exit the loop
+                
+                exchange = await get_exchange(user_id)
+                if not exchange:
+                    await bot_instance.send_message(user_id, "❌ Failed to connect to the exchange. Stopping trading.")
+                    user.investment_status = "stopped"
+                    break
+                
+                invest_amt = float(user.base_investment or 0.0)
+                if invest_amt < 5.0:
+                    await bot_instance.send_message(user_id, "❌ Please set an investment amount (min 5 USDT). Stopping trading.")
+                    user.investment_status = "stopped"
+                    break
+                
+                supported_paths = []
+                if user.trading_mode == "triangular":
+                    supported_paths = TRIANGULAR_PATHS
+                elif user.trading_mode == "quad":
+                    supported_paths = QUAD_PATHS
+                elif user.trading_mode == "penta":
+                    supported_paths = PENTA_PATHS
+
+                if not supported_paths:
+                    await bot_instance.send_message(user_id, "🔍 No supported paths found for this trading mode. Stopping trading.")
+                    user.investment_status = "stopped"
+                    break
+
+                best_opportunity = None
+                best_profit = -1
+
+                for path in supported_paths:
+                    profit = await check_arbitrage_path(exchange, path, invest_amt)
+                    if profit is not None and profit > best_profit:
+                        best_profit = profit
+                        best_opportunity = path
+
+                if best_opportunity:
+                    profit_percent = (best_profit / invest_amt) * 100
+                    await bot_instance.send_message(
+                        user_id,
+                        f"📈 Profitable opportunity found: {' → '.join(best_opportunity)}\n"
+                        f"Expected Profit: {best_profit:.6f} USDT ({profit_percent:.2f}%)"
+                    )
+                    await execute_arbitrage(user_id, best_opportunity, invest_amt, bot_instance)
+                else:
+                    await bot_instance.send_message(user_id, "🔍 No profitable opportunities found at the moment.")
+
+            await asyncio.sleep(ARBITRAGE_CYCLE)
+
+    except TelegramAPIError:
+        logger.warning(f"Bot was blocked by user {user_id}. Stopping cycle.")
         with db_session() as db:
             user = db.query(User).filter_by(telegram_id=user_id).first()
-            if not user or user.investment_status != "running":
-                return
-            
-            exchange = await get_exchange(user_id)
-            if not exchange:
-                await bot_instance.send_message(user_id, "❌ فشل الاتصال بالمنصة.")
-                return
-
-            invest_amt = float(user.base_investment or 0.0)
-            if invest_amt < 5.0:
-                await bot_instance.send_message(user_id, "❌ يرجى تعيين مبلغ استثمار (الحد الأدنى 5 USDT).")
-                return
-            
-            supported_paths = []
-            if user.trading_mode == "triangular":
-                supported_paths = TRIANGULAR_PATHS
-            elif user.trading_mode == "quad":
-                supported_paths = QUAD_PATHS
-            elif user.trading_mode == "penta":
-                supported_paths = PENTA_PATHS
-
-            if not supported_paths:
-                await bot_instance.send_message(user_id, "🔍 لا توجد مسارات تداول مدعومة لهذا الوضع.")
-                return
-
-            best_opportunity = None
-            best_profit = -1
-
-            for path in supported_paths:
-                profit = await check_arbitrage_path(exchange, path, invest_amt)
-                if profit is not None and profit > best_profit:
-                    best_profit = profit
-                    best_opportunity = path
-
-            if best_opportunity:
-                profit_percent = (best_profit / invest_amt) * 100
-                await bot_instance.send_message(
-                    user_id,
-                    f"📈 فرصة مربحة! المسار: {' → '.join(best_opportunity)}\n"
-                    f"الربح المحتمل: {best_profit:.6f} USDT ({profit_percent:.2f}%)"
-                )
-                success = await execute_arbitrage(user_id, best_opportunity, invest_amt, bot_instance)
-                if not success:
-                    logger.error(f"فشل تنفيذ صفقة المراجحة للمسار: {best_opportunity}")
-            else:
-                await bot_instance.send_message(user_id, "🔍 لا توجد فرص مربحة حالياً.")
-
-    except ChatNotFound:
-        # إذا تم حظر البوت بواسطة المستخدم
-        logger.warning(f"تم حظر البوت بواسطة المستخدم {user_id}. إيقاف الدورة.")
-        with db_session() as db:
-            user = db.query(User).filter_by(telegram_id=user_id).first()
-            if user:
-                user.investment_status = "stopped"
+            if user: user.investment_status = "stopped"
     except Exception as e:
-        logger.error(f"خطأ في دورة التداول: {str(e)}")
-        # تجنب إرسال رسائل إذا كان الخطأ متكرراً
-    finally:
-        await asyncio.sleep(ARBITRAGE_CYCLE)
+        logger.error(f"An error occurred in the trading cycle: {str(e)}")
+        await bot_instance.send_message(user_id, f"❌ A critical error occurred in the trading cycle: {str(e)}. Stopping bot.")
         with db_session() as db:
             user = db.query(User).filter_by(telegram_id=user_id).first()
-            if user and user.investment_status == "running":
-                asyncio.create_task(enhanced_trading_cycle(user_id, bot_instance))
+            if user: user.investment_status = "stopped"
+    finally:
+        # Final cleanup or notification
+        logger.info(f"Trading cycle for user {user_id} has concluded.")
 
 # -----------------
-# مقبضات (Handlers) البوت
+# Bot Handlers & FSM
 # -----------------
 class ExchangeStates(StatesGroup):
     choosing_exchange = State()
@@ -447,6 +438,7 @@ class ExchangeStates(StatesGroup):
 class InvestmentStates(StatesGroup):
     entering_amount = State()
 
+# --- Keyboards ---
 def main_menu_keyboard():
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -483,7 +475,7 @@ def settings_keyboard():
     kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
     return kb
 
-# --- المقبضات الفعلية ---
+# --- Actual Handlers ---
 @dp.message_handler(commands=["start", "help"])
 async def cmd_start(message: types.Message):
     with db_session() as db:
@@ -499,9 +491,9 @@ async def cmd_start(message: types.Message):
         reply_markup=main_menu_keyboard()
     )
 
-@dp.callback_query_handler(lambda c: c.data == "back_main")
+@dp.callback_query_handler(lambda c: c.data == "back_main", state="*")
 async def back_main(callback_query: types.CallbackQuery, state: FSMContext):
-    await state.finish()
+    await state.clear() # Use state.clear() for modern aiogram
     await callback_query.answer()
     await callback_query.message.edit_text("🏠 القائمة الرئيسية", reply_markup=main_menu_keyboard())
 
@@ -517,20 +509,20 @@ async def menu_exchanges(callback_query: types.CallbackQuery):
 async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     exchange_name = callback_query.data.split("_")[1].capitalize()
+    await state.set_state(ExchangeStates.entering_api_key) # New FSM method
     await state.update_data(exchange_name=exchange_name)
-    await ExchangeStates.entering_api_key.set()
     await callback_query.message.edit_text(f"🔑 أدخل API Key لـ {exchange_name}:", reply_markup=back_keyboard())
 
 @dp.message_handler(state=ExchangeStates.entering_api_key)
 async def enter_api_key(message: types.Message, state: FSMContext):
     await state.update_data(api_key=message.text.strip())
-    await ExchangeStates.next()
+    await state.set_state(ExchangeStates.entering_secret)
     await message.answer("🔒 أدخل Secret Key:", reply_markup=back_keyboard())
 
 @dp.message_handler(state=ExchangeStates.entering_secret)
 async def enter_secret(message: types.Message, state: FSMContext):
     await state.update_data(secret=message.text.strip())
-    await ExchangeStates.next()
+    await state.set_state(ExchangeStates.entering_password)
     await message.answer("🔑 أدخل Password (أو 'لا' إذا لم يكن موجوداً):", reply_markup=back_keyboard())
 
 @dp.message_handler(state=ExchangeStates.entering_password)
@@ -543,13 +535,13 @@ async def enter_password(message: types.Message, state: FSMContext):
             db.query(ExchangeCredential).filter_by(user_id=user.id, exchange_id=data['exchange_name']).delete()
             exchange = ExchangeCredential(user_id=user.id, exchange_id=data['exchange_name'], api_key=data['api_key'], secret=data['secret'], password=password)
             db.add(exchange)
-    await state.finish()
+    await state.clear()
     await message.answer("✅ تم حفظ بيانات المنصة بنجاح!", reply_markup=main_menu_keyboard())
 
 @dp.callback_query_handler(lambda c: c.data == "menu_investment", state=None)
 async def menu_investment(callback_query: types.CallbackQuery):
     await callback_query.answer()
-    await InvestmentStates.entering_amount.set()
+    await FSMContext.set_state(callback_query.message, InvestmentStates.entering_amount)
     await callback_query.message.edit_text("💵 أدخل مبلغ الاستثمار (الحد الأدنى 5 USDT):", reply_markup=back_keyboard())
 
 @dp.message_handler(state=InvestmentStates.entering_amount)
@@ -563,7 +555,7 @@ async def enter_investment_amount(message: types.Message, state: FSMContext):
             user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
             if user:
                 user.base_investment = amount
-        await state.finish()
+        await state.clear()
         await message.answer(f"✅ تم تعيين مبلغ الاستثمار إلى {amount:.2f} USDT", reply_markup=main_menu_keyboard())
     except ValueError:
         await message.answer("❌ صيغة المبلغ غير صحيحة. يرجى إدخال رقم:")
@@ -595,8 +587,12 @@ async def menu_start_trading(callback_query: types.CallbackQuery):
     with db_session() as db:
         user = db.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
         if user:
+            if user.investment_status == "running":
+                await callback_query.message.answer("البوت يعمل بالفعل. يمكنك إيقافه من القائمة الرئيسية.")
+                return
             user.investment_status = "running"
             await callback_query.message.edit_text("🚀 بدء التداول...", reply_markup=main_menu_keyboard())
+            # Start the trading cycle in a background task
             asyncio.create_task(enhanced_trading_cycle(user.telegram_id, callback_query.bot))
 
 @dp.callback_query_handler(lambda c: c.data == "menu_stop_bot")
@@ -620,7 +616,7 @@ async def menu_report(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text(report, reply_markup=main_menu_keyboard())
 
 # -----------------
-# وظيفة التشغيل
+# Main Function
 # -----------------
 async def on_startup(dp):
     logger.info("Starting bot...")
