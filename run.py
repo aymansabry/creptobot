@@ -25,7 +25,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.client.default import DefaultBotProperties
 from aiogram import Router
 from aiogram import F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, StateFilter
 
 # -----------------
 # Core Bot & Logging Setup
@@ -506,7 +506,7 @@ async def menu_exchanges(callback_query: types.CallbackQuery, state: FSMContext)
     await callback_query.message.edit_text("💹 اختر المنصة:", reply_markup=kb)
     await state.set_state(ExchangeStates.choosing_exchange)
 
-@router.callback_query(F.data.startswith("exchange_"), ExchangeStates.choosing_exchange)
+@router.callback_query(F.data.startswith("exchange_"), StateFilter(ExchangeStates.choosing_exchange))
 async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     exchange_name = callback_query.data.split("_")[1].capitalize()
@@ -539,7 +539,7 @@ async def enter_password(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ تم حفظ بيانات المنصة بنجاح!", reply_markup=main_menu_keyboard())
 
-@router.callback_query(F.data == "menu_investment", state=None)
+@router.callback_query(F.data == "menu_investment")
 async def menu_investment(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     await state.set_state(InvestmentStates.entering_amount)
