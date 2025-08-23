@@ -18,11 +18,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 from aiogram import Bot, Dispatcher, types
-# New path for MemoryStorage in modern aiogram
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
+from aiogram.client.default import DefaultBotProperties
 
 # -----------------
 # Core Bot & Logging Setup
@@ -39,8 +39,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize the Bot and Dispatcher
-bot = Bot(token=BOT_TOKEN, parse_mode='HTML')
+# Initialize the Bot and Dispatcher with new syntax
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
@@ -476,7 +476,7 @@ def settings_keyboard():
     return kb
 
 # --- Actual Handlers ---
-@dp.message_handler(commands=["start", "help"])
+@dp.message.register(types.Message, commands=["start", "help"])
 async def cmd_start(message: types.Message):
     with db_session() as db:
         user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
@@ -491,13 +491,13 @@ async def cmd_start(message: types.Message):
         reply_markup=main_menu_keyboard()
     )
 
-@dp.callback_query_handler(lambda c: c.data == "back_main", state="*")
+@dp.callback_query.register(lambda c: c.data == "back_main", state="*")
 async def back_main(callback_query: types.CallbackQuery, state: FSMContext):
-    await state.clear() # Use state.clear() for modern aiogram
+    await state.clear()
     await callback_query.answer()
     await callback_query.message.edit_text("🏠 القائمة الرئيسية", reply_markup=main_menu_keyboard())
 
-@dp.callback_query_handler(lambda c: c.data == "menu_exchanges")
+@dp.callback_query.register(lambda c: c.data == "menu_exchanges")
 async def menu_exchanges(callback_query: types.CallbackQuery):
     await callback_query.answer()
     kb = types.InlineKeyboardMarkup()
@@ -505,27 +505,27 @@ async def menu_exchanges(callback_query: types.CallbackQuery):
     kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
     await callback_query.message.edit_text("💹 اختر المنصة:", reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data.startswith("exchange_"), state=None)
+@dp.callback_query.register(lambda c: c.data.startswith("exchange_"), state=None)
 async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     exchange_name = callback_query.data.split("_")[1].capitalize()
-    await state.set_state(ExchangeStates.entering_api_key) # New FSM method
+    await state.set_state(ExchangeStates.entering_api_key)
     await state.update_data(exchange_name=exchange_name)
     await callback_query.message.edit_text(f"🔑 أدخل API Key لـ {exchange_name}:", reply_markup=back_keyboard())
 
-@dp.message_handler(state=ExchangeStates.entering_api_key)
+@dp.message.register(types.Message, state=ExchangeStates.entering_api_key)
 async def enter_api_key(message: types.Message, state: FSMContext):
     await state.update_data(api_key=message.text.strip())
     await state.set_state(ExchangeStates.entering_secret)
     await message.answer("🔒 أدخل Secret Key:", reply_markup=back_keyboard())
 
-@dp.message_handler(state=ExchangeStates.entering_secret)
+@dp.message.register(types.Message, state=ExchangeStates.entering_secret)
 async def enter_secret(message: types.Message, state: FSMContext):
     await state.update_data(secret=message.text.strip())
     await state.set_state(ExchangeStates.entering_password)
     await message.answer("🔑 أدخل Password (أو 'لا' إذا لم يكن موجوداً):", reply_markup=back_keyboard())
 
-@dp.message_handler(state=ExchangeStates.entering_password)
+@dp.message.register(types.Message, state=ExchangeStates.entering_password)
 async def enter_password(message: types.Message, state: FSMContext):
     data = await state.get_data()
     password = message.text.strip() if message.text.strip().lower() != "لا" else None
@@ -538,13 +538,13 @@ async def enter_password(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ تم حفظ بيانات المنصة بنجاح!", reply_markup=main_menu_keyboard())
 
-@dp.callback_query_handler(lambda c: c.data == "menu_investment", state=None)
-async def menu_investment(callback_query: types.CallbackQuery):
+@dp.callback_query.register(lambda c: c.data == "menu_investment", state=None)
+async def menu_investment(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
-    await FSMContext.set_state(callback_query.message, InvestmentStates.entering_amount)
+    await state.set_state(InvestmentStates.entering_amount)
     await callback_query.message.edit_text("💵 أدخل مبلغ الاستثمار (الحد الأدنى 5 USDT):", reply_markup=back_keyboard())
 
-@dp.message_handler(state=InvestmentStates.entering_amount)
+@dp.message.register(types.Message, state=InvestmentStates.entering_amount)
 async def enter_investment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text)
@@ -560,12 +560,12 @@ async def enter_investment_amount(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ صيغة المبلغ غير صحيحة. يرجى إدخال رقم:")
 
-@dp.callback_query_handler(lambda c: c.data == "menu_settings")
+@dp.callback_query.register(lambda c: c.data == "menu_settings")
 async def menu_settings(callback_query: types.CallbackQuery):
     await callback_query.answer()
     await callback_query.message.edit_text("⚙️ إعدادات التداول:", reply_markup=settings_keyboard())
 
-@dp.callback_query_handler(lambda c: c.data.startswith("setting_"))
+@dp.callback_query.register(lambda c: c.data.startswith("setting_"))
 async def handle_settings(callback_query: types.CallbackQuery):
     await callback_query.answer()
     setting_type, setting_value = callback_query.data.split("_")[1:]
@@ -581,7 +581,7 @@ async def handle_settings(callback_query: types.CallbackQuery):
                 reply_markup=main_menu_keyboard()
             )
 
-@dp.callback_query_handler(lambda c: c.data == "menu_start_trading")
+@dp.callback_query.register(lambda c: c.data == "menu_start_trading")
 async def menu_start_trading(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
@@ -595,7 +595,7 @@ async def menu_start_trading(callback_query: types.CallbackQuery):
             # Start the trading cycle in a background task
             asyncio.create_task(enhanced_trading_cycle(user.telegram_id, callback_query.bot))
 
-@dp.callback_query_handler(lambda c: c.data == "menu_stop_bot")
+@dp.callback_query.register(lambda c: c.data == "menu_stop_bot")
 async def menu_stop_bot(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
@@ -604,7 +604,7 @@ async def menu_stop_bot(callback_query: types.CallbackQuery):
             user.investment_status = "stopped"
     await callback_query.message.edit_text("🛑 تم إيقاف البوت. لن يتم تنفيذ أي عمليات جديدة.", reply_markup=main_menu_keyboard())
 
-@dp.callback_query_handler(lambda c: c.data == "menu_report")
+@dp.callback_query.register(lambda c: c.data == "menu_report")
 async def menu_report(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
@@ -618,16 +618,16 @@ async def menu_report(callback_query: types.CallbackQuery):
 # -----------------
 # Main Function
 # -----------------
-async def on_startup(dp):
+async def on_startup(dispatcher: Dispatcher):
     logger.info("Starting bot...")
     upgrade_database()
     logger.info("Database tables checked/upgraded successfully.")
 
-async def on_shutdown(dp):
+async def on_shutdown(dispatcher: Dispatcher):
     logger.info("Shutting down bot...")
-    await dp.storage.close()
-    await dp.storage.wait_closed()
-    await dp.bot.close()
+    await dispatcher.storage.close()
+    await dispatcher.storage.wait_closed()
+    await dispatcher.bot.session.close()
 
 if __name__ == '__main__':
     from aiogram import executor
