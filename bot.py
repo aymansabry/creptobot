@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # دوال وموديولات المشروع (تأكد الملفات موجودة كما اتفقنا)
 from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades
-from trading import start_arbitrage, stop_arbitrage, get_client  # start_arbitrage(user_id), stop_arbitrage()
+from trading import start_arbitrage, stop_arbitrage, get_client_for_user  # تم تغيير الاسم
 from ai_strategy import AIStrategy
 from datetime import datetime
 
@@ -51,7 +51,8 @@ def _kbd_settings():
 # ====== Handlers ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await create_user(user.id, user.username or "")
+    # تم تصحيح استدعاء الدالة لتمرير معرف المستخدم فقط
+    await create_user(user.id)
     await update.message.reply_text(
         "✅ تم التسجيل بنجاح.\nاختر من القائمة:", reply_markup=_kbd_main()
     )
@@ -96,8 +97,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # بدء / إيقاف التداول
     if data == "start_trading":
-        # تشغيل في مهمة فرعية حتى لا يعرقل البوت
-        amount = await get_amount(user_id)
+        amount = get_amount(user_id)
         if not amount:
             await query.edit_message_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات > مبلغ الاستثمار.")
             return
@@ -107,17 +107,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "stop_trading":
-        await stop_arbitrage()
+        # تم تعديل استدعاء الدالة لإيقاف التداول للمستخدم الحالي فقط
+        await stop_arbitrage(user_id)
         await query.edit_message_text("🛑 تم إيقاف التداول.")
         return
 
     # حالة السوق -> سنجلب تحليل من OpenAI (في thread لأن analyze قد يكون blocking)
     if data == "market_status":
         await query.edit_message_text("⏳ جاري تحليل السوق، انتظر لحظة...")
-        # اجمع بيانات بسيطة (مثال: أزواج مختارة أو آخر أسعار)
         try:
-            client = await get_client(user_id)  # للتأكد من مفاتيح المستخدم
-        except Exception:
+            # تم تعديل اسم الدالة
+            client = await get_client_for_user(user_id)
+        except ValueError:
             await query.edit_message_text("❌ لم تسجل مفاتيح Binance بعد. اذهب للإعدادات.")
             return
 
@@ -137,7 +138,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # تقارير
     if data == "reports":
-        trades = get_last_trades()
+        # تم تعديل استدعاء الدالة لتمرير معرف المستخدم
+        trades = get_last_trades(user_id)
         if not trades:
             await query.edit_message_text("📜 لا توجد صفقات مسجلة بعد.")
             return
@@ -171,15 +173,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # سنحاول حفظ المفاتيح والتحقق منها عبر محاولة إنشاء client
         try:
             # حفظ أوليًا (DB)
+            # تم تصحيح استدعاء الدالة، تم إضافة await
             await save_api_keys(user_id, api_key, api_secret)
             # تحقق عملي: حاول إنشاء عميل Binance والتحقق من الحساب
             try:
-                client = await get_client(user_id)
+                # تم تعديل اسم الدالة
+                client = await get_client_for_user(user_id)
                 # اختبار بسيط لجلب الحساب
                 await client.get_account()  # سيؤكد صلاحية المفاتيح
                 await update.message.reply_text("✅ تم التحقق من المفاتيح وحفظها بنجاح.")
             except Exception as e:
                 # إذا فشل، نحذف المفاتيح المحفوظة ونبلغ المستخدم
+                # تم تصحيح استدعاء الدالة، تم إضافة await
                 await save_api_keys(user_id, None, None)
                 await update.message.reply_text(f"❌ التحقق فشل: {e}\nتأكد من صلاحية المفاتيح وصلاحية التداول.")
         except Exception as e:
@@ -208,6 +213,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # استقبال مفاتيح/مبلغ بشكل CSV مباشر (fallback)
     if "," in text and len(text.split(",")) == 2:
         api_key, api_secret = text.split(",", 1)
+        # تم تصحيح استدعاء الدالة، تم إضافة await
         await save_api_keys(user_id, api_key.strip(), api_secret.strip())
         await update.message.reply_text("✅ تم حفظ المفاتيح (أدخل /start أو افتح القائمة).")
         return
@@ -215,7 +221,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # أو أي رسالة عامة
     await update.message.reply_text("📌 استخدم الأزرار أو اكتب /help لعرض الأوامر.")
 
-# ====== Main runner (غير async لتفادي مشاكل event loop) ======
+# ====== Main runner ======
 def main():
     if not BOT_TOKEN:
         raise ValueError("⚠️ لم يتم العثور على TELEGRAM_BOT_TOKEN في المتغيرات البيئية")
