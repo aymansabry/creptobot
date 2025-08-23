@@ -1,85 +1,88 @@
-import logging
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from db import create_user, save_api_keys, save_amount, get_amount
-from trading import start_arbitrage, stop_arbitrage
 import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount
+from trading import start_arbitrage, stop_arbitrage
+import os
+import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MAIN_MENU = [["⚙️ الإعدادات", "💰 بدء التداول"], ["🛑 إيقاف التداول", "📊 حالة السوق"], ["📜 التقارير"]]
-SETTINGS_MENU = [["🔑 ربط المنصات", "💵 مبلغ الاستثمار"], ["⬅️ رجوع"]]
-
+# --- دالة start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await create_user(update.effective_chat.id, update.effective_user.username)
-    await update.message.reply_text(
-        "✅ تم التسجيل بنجاح، افتح الإعدادات لإضافة مفاتيح Binance والمبلغ.",
-        reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
-    )
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    await create_user(user_id, username)
+    
+    keyboard = [
+        [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings")],
+        [InlineKeyboardButton("💰 بدء التداول", callback_data="start_trading")],
+        [InlineKeyboardButton("🛑 إيقاف التداول", callback_data="stop_trading")],
+        [InlineKeyboardButton("📊 حالة السوق", callback_data="market_status")],
+        [InlineKeyboardButton("📜 التقارير", callback_data="reports")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("✅ أهلاً! اختر من القائمة:", reply_markup=reply_markup)
 
-async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "⚙️ اختر من القائمة:",
-        reply_markup=ReplyKeyboardMarkup(SETTINGS_MENU, resize_keyboard=True)
-    )
+# --- التعامل مع الأزرار ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
 
-async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "🔑 ربط المنصات":
-        context.user_data['stage'] = 'api_key'
-        await update.message.reply_text("أرسل الـAPI Key:")
-    elif text == "💵 مبلغ الاستثمار":
-        context.user_data['stage'] = 'amount'
-        await update.message.reply_text("أرسل مبلغ الاستثمار بالدولار:")
-    elif text == "⬅️ رجوع":
-        await update.message.reply_text("✅ عدت للقائمة الرئيسية.",
-            reply_markup=ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True))
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    stage = context.user_data.get('stage')
-    user_id = update.effective_chat.id
-    if stage == 'api_key':
-        context.user_data['api_key'] = update.message.text
-        context.user_data['stage'] = 'api_secret'
-        await update.message.reply_text("أرسل الـAPI Secret:")
-    elif stage == 'api_secret':
-        api_key = context.user_data.get('api_key')
-        api_secret = update.message.text
-        await save_api_keys(user_id, api_key, api_secret)
-        await update.message.reply_text("✅ تم ربط المنصة بنجاح.")
-        context.user_data['stage'] = None
-    elif stage == 'amount':
+    if query.data == "settings":
+        await query.message.reply_text(
+            "أرسل مفاتيح Binance بهذا الشكل (CSV):\nAPI_KEY,API_SECRET\nأو 'skip' للرجوع."
+        )
+    elif query.data == "start_trading":
         try:
-            amount = float(update.message.text)
-            await save_amount(user_id, amount)
-            await update.message.reply_text(f"✅ تم حفظ المبلغ: {amount} USDT")
-        except:
-            await update.message.reply_text("❌ المبلغ غير صحيح، أرسل رقم بالدولار.")
-        context.user_data['stage'] = None
+            await start_arbitrage(user_id)
+            await query.message.reply_text("💰 التداول بدأ.")
+        except Exception as e:
+            await query.message.reply_text(f"❌ فشل بدء التداول: {e}")
+    elif query.data == "stop_trading":
+        await stop_arbitrage()
+        await query.message.reply_text("🛑 التداول تم إيقافه.")
+    elif query.data == "market_status":
+        api_keys = await get_user_api_keys(user_id)
+        if not api_keys:
+            await query.message.reply_text("❌ لم يتم تسجيل مفاتيح Binance بعد.")
+            return
+        client = await start_arbitrage.get_client(user_id)  # إعادة استخدام client
+        tickers = await client.get_all_tickers()
+        msg = f"ملخص السوق: عدد أزواج محمّلة: {len(tickers)}"
+        await query.message.reply_text(msg)
+    elif query.data == "reports":
+        await query.message.reply_text("لا توجد صفقات بعد.")
 
-async def start_trading(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
-    amount = await get_amount(user_id)
-    if not amount:
-        await update.message.reply_text("❌ الرجاء تحديد مبلغ الاستثمار أولاً في الإعدادات.")
-        return
-    await update.message.reply_text(f"💰 بدء التداول بالمبلغ: {amount} USDT")
-    asyncio.create_task(start_arbitrage(user_id))
+# --- استقبال الرسائل العادية ---
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = update.effective_user.id
 
-async def stop_trading(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await stop_arbitrage()
-    await update.message.reply_text("🛑 تم إيقاف التداول.")
+    # استقبال مفاتيح Binance
+    if "," in text:
+        try:
+            api_key, api_secret = text.strip().split(",")
+            await save_api_keys(user_id, api_key, api_secret)
+            await update.message.reply_text("✅ تم حفظ مفاتيح Binance.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في حفظ المفاتيح: {e}")
+    elif text.lower() == "skip":
+        await update.message.reply_text("تم الرجوع للقائمة الرئيسية.")
+    else:
+        await update.message.reply_text("✅ البوت شغال! استخدم القوائم للتفاعل.")
 
+# --- تشغيل البوت ---
 async def main():
-    app = ApplicationBuilder().token("TELEGRAM_BOT_TOKEN_HERE").build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.Regex("⚙️ الإعدادات"), settings))
-    app.add_handler(MessageHandler(filters.Regex("💰 بدء التداول"), start_trading))
-    app.add_handler(MessageHandler(filters.Regex("🛑 إيقاف التداول"), stop_trading))
-    # باقي القوائم يمكنك إضافة handlers للتقارير وحالة السوق
-    await app.run_polling()
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    app = ApplicationBuilder().token(token).build()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("help", start))
+    app.add_handler(app.builder.message_handler(message_handler))
+
+    print("✅ البوت شغال!")
+    await app.run_polling()
