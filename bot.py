@@ -33,7 +33,7 @@ def _kbd_main():
         [
             [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings")],
             [InlineKeyboardButton("💰 بدء التداول", callback_data="start_trading"),
-             InlineKeyboardButton("🛑 إيقاف التداول", callback_data="stop_trading")],
+             InlineKeyboardButton("� إيقاف التداول", callback_data="stop_trading")],
             [InlineKeyboardButton("📊 حالة السوق", callback_data="market_status"),
              InlineKeyboardButton("📜 التقارير", callback_data="reports")],
         ]
@@ -66,7 +66,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📜 التقارير — آخر الصفقات المسجلة"
     )
 
-# زرار الـ Inline keyboard
+# هذا هو الـ Handler الخاص بأوامر الأزرار (Callback Queries)
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -83,13 +83,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "link_api":
-        # ندخل المستخدم في وضع إدخال الـ API key ثم secret
         context.user_data["stage"] = "api_key"
         await query.edit_message_text("🔑 أرسل الـAPI Key الآن (سطر واحد).")
         return
 
     if data == "set_amount":
-        # وضع إدخال المبلغ
         context.user_data["stage"] = "amount"
         await query.edit_message_text("💵 أرسل مبلغ الاستثمار بالدولار (مثال: 5).")
         return
@@ -101,7 +99,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات > مبلغ الاستثمار.")
             return
         await query.edit_message_text(f"💰 جاري بدء التداول بالمبلغ: {amount} USDT\n(سأعلمك بالنتائج)")
-        # تشغيل المهمة بشكل غير متزامن
         asyncio.create_task(start_arbitrage(user_id))
         return
 
@@ -110,7 +107,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🛑 تم إيقاف التداول.")
         return
 
-    # حالة السوق -> سنجلب تحليل من OpenAI (في thread لأن analyze قد يكون blocking)
+    # حالة السوق -> سنجلب تحليل من OpenAI
     if data == "market_status":
         await query.edit_message_text("⏳ جاري تحليل السوق، انتظر لحظة...")
         try:
@@ -119,18 +116,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ لم تسجل مفاتيح Binance بعد. اذهب للإعدادات.")
             return
 
-        # مثال: زود بيانات مبسطة لـ OpenAI
         tickers = await client.get_all_tickers()
-        # نختصر لأكبر الأزواج (بسبب طول النص)
         sample = ", ".join([t["symbol"] for t in tickers[:40]])
-        # شغّل تحليل OpenAI في executor لتفادي حظر loop
         loop = asyncio.get_event_loop()
         analysis = await loop.run_in_executor(None, lambda: ai.analyze({"sample_symbols": sample}))
-        # نقسم الرد على رسائل صغيرة لو طويل
         chunks = [analysis[i:i+800] for i in range(0, len(analysis), 800)]
         for ch in chunks:
             await query.message.reply_text(f"📊 نصيحة OpenAI:\n{ch}")
-        # بعد إرسال التحليل، نعيد إرسال القائمة الرئيسية
         await query.message.reply_text("✅ انتهى التحليل.", reply_markup=_kbd_main())
         return
 
@@ -140,24 +132,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not trades:
             await query.edit_message_text("📜 لا توجد صفقات مسجلة بعد.", reply_markup=_kbd_main())
             return
-        # صياغة بسيطة
         text = "📜 آخر الصفقات:\n"
         for t in trades[:10]:
             ts = getattr(t, "timestamp", None)
             ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else ""
             text += f"• {t.pair} | ربح: {t.profit:.6f}$ | {ts_str}\n"
-        # بعد إرسال التقرير، نعيد إرسال القائمة الرئيسية
         await query.edit_message_text(text, reply_markup=_kbd_main())
         return
 
-# استقبال الرسائل — نعالج إدخال المفاتيح أو المبلغ اعتمادًا على الـ stage
+# هذا هو الـ Handler الخاص بالرسائل النصية
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = (update.message.text or "").strip()
 
     stage = context.user_data.get("stage")
 
-    # مرحلة إدخال API Key ثم Secret
     if stage == "api_key":
         context.user_data["tmp_api_key"] = text
         context.user_data["stage"] = "api_secret"
@@ -169,19 +158,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         api_secret = text
         try:
             await save_api_keys(user_id, api_key, api_secret)
-            try:
-                client = await get_client_for_user(user_id)
-                await client.get_account()
-                await update.message.reply_text("✅ تم التحقق من المفاتيح وحفظها بنجاح.", reply_markup=_kbd_main())
-            except Exception as e:
-                await save_api_keys(user_id, None, None)
-                await update.message.reply_text(f"❌ التحقق فشل: {e}\nتأكد من صلاحية المفاتيح وصلاحية التداول.", reply_markup=_kbd_main())
+            await update.message.reply_text("✅ تم حفظ المفاتيح بنجاح.", reply_markup=_kbd_main())
         except Exception as e:
             await update.message.reply_text(f"❌ خطأ في حفظ المفاتيح: {e}", reply_markup=_kbd_main())
         context.user_data["stage"] = None
         return
 
-    # مرحلة إدخال المبلغ
     if stage == "amount":
         try:
             val = float(text)
@@ -198,14 +180,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["stage"] = None
         return
 
-    # استقبال مفاتيح/مبلغ بشكل CSV مباشر (fallback)
-    if "," in text and len(text.split(",")) == 2:
-        api_key, api_secret = text.split(",", 1)
-        await save_api_keys(user_id, api_key.strip(), api_secret.strip())
-        await update.message.reply_text("✅ تم حفظ المفاتيح.", reply_markup=_kbd_main())
-        return
-
-    # أو أي رسالة عامة
     await update.message.reply_text("📌 استخدم الأزرار أو اكتب /help لعرض الأوامر.", reply_markup=_kbd_main())
 
 # ====== Main runner ======
@@ -226,3 +200,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+�
