@@ -1,147 +1,70 @@
 # db.py
-import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, BigInteger
-from sqlalchemy.orm import sessionmaker, declarative_base
+import json
+import logging
 from datetime import datetime
-from sqlalchemy.exc import SQLAlchemyError
 
-# قراءة عنوان قاعدة البيانات من متغيرات البيئة.
-# إذا لم يكن موجودًا، سيتم استخدام قاعدة بيانات SQLite محلية.
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trading_bot.db")
+logger = logging.getLogger(__name__)
 
-engine = create_engine(DATABASE_URL)
-Base = declarative_base()
+# Dummy database to simulate a database.
+# In a real-world scenario, you would use a proper database like PostgreSQL, MongoDB, or Redis.
+user_database = {}
 
-class User(Base):
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True, index=True)
-    # تم تغيير نوع البيانات من Integer إلى BigInteger
-    telegram_id = Column(BigInteger, unique=True, index=True)
-    # تم إضافة طول للعمود String ليتوافق مع MySQL
-    api_key = Column(String(255))
-    api_secret = Column(String(255))
-    trading_amount = Column(Float, default=5.0)
+def create_user(user_id):
+    """Initializes user data if it doesn't exist."""
+    if user_id not in user_database:
+        user_database[user_id] = {
+            "api_keys": {},
+            "amount": 0.0,
+            "last_trades": [],
+        }
+        logger.info(f"User {user_id} created in the database.")
 
-class Trade(Base):
-    __tablename__ = 'trades'
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer)
-    pair = Column(String(255))
-    profit = Column(Float)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+def save_api_keys(user_id, api_key, api_secret):
+    """Saves API keys for a user."""
+    create_user(user_id)
+    user_database[user_id]["api_keys"] = {
+        "api_key": api_key,
+        "api_secret": api_secret,
+    }
+    logger.info(f"API keys saved for user {user_id}.")
 
-# إنشاء الجداول في قاعدة البيانات
-Base.metadata.create_all(bind=engine)
+def get_user_api_keys(user_id):
+    """Retrieves API keys for a user."""
+    return user_database.get(user_id, {}).get("api_keys", {})
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def save_amount(user_id, amount):
+    """Saves the trading amount for a user."""
+    create_user(user_id)
+    user_database[user_id]["amount"] = amount
+    logger.info(f"Amount {amount} saved for user {user_id}.")
 
-# ====================
-# Functions for CRUD operations
-# ====================
+def get_amount(user_id):
+    """Retrieves the trading amount for a user."""
+    return user_database.get(user_id, {}).get("amount", 0.0)
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def save_last_trades(user_id, pair, profit, timestamp):
+    """
+    Saves the last trade details for a user.
+    This function was the missing piece causing the ImportError.
+    """
+    create_user(user_id)
+    if "last_trades" not in user_database[user_id]:
+        user_database[user_id]["last_trades"] = []
+    
+    trade_info = {
+        "pair": pair,
+        "profit": float(profit), # Convert Decimal to float for JSON compatibility
+        "timestamp": timestamp.isoformat()
+    }
+    
+    # Keep only the last 10 trades
+    user_database[user_id]["last_trades"].insert(0, trade_info)
+    user_database[user_id]["last_trades"] = user_database[user_id]["last_trades"][:10]
+    
+    logger.info(f"Trade for user {user_id} saved: {trade_info}")
 
-async def create_user(telegram_id: int):
-    """إنشاء مستخدم جديد إذا لم يكن موجودًا بالفعل."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.telegram_id == telegram_id).first()
-        if not user:
-            new_user = User(telegram_id=telegram_id)
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
-            print(f"User with telegram_id {telegram_id} created.")
-            return new_user
-        return user
-    except SQLAlchemyError as e:
-        print(f"Database error: {e}")
-        db.rollback()
-    finally:
-        db.close()
-
-async def save_api_keys(telegram_id: int, api_key: str, api_secret: str):
-    """حفظ مفاتيح API للمستخدم."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.telegram_id == telegram_id).first()
-        if user:
-            user.api_key = api_key
-            user.api_secret = api_secret
-            db.commit()
-            return True
-        return False
-    except SQLAlchemyError as e:
-        print(f"Database error: {e}")
-        db.rollback()
-        return False
-    finally:
-        db.close()
-
-def get_user_api_keys(telegram_id: int):
-    """استرجاع مفاتيح API للمستخدم."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.telegram_id == telegram_id).first()
-        if user:
-            return user.api_key, user.api_secret
-        return None, None
-    finally:
-        db.close()
-
-async def save_amount(telegram_id: int, amount: float):
-    """حفظ مبلغ التداول للمستخدم."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.telegram_id == telegram_id).first()
-        if user:
-            user.trading_amount = amount
-            db.commit()
-            return True
-        return False
-    except SQLAlchemyError as e:
-        print(f"Database error: {e}")
-        db.rollback()
-        return False
-    finally:
-        db.close()
-
-def get_amount(telegram_id: int):
-    """استرجاع مبلغ التداول للمستخدم."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.telegram_id == telegram_id).first()
-        if user:
-            return user.trading_amount
-        return None
-    finally:
-        db.close()
-
-def add_trade(telegram_id: int, pair: str, profit: float):
-    """إضافة صفقة جديدة إلى قاعدة البيانات."""
-    db = SessionLocal()
-    try:
-        new_trade = Trade(user_id=telegram_id, pair=pair, profit=profit)
-        db.add(new_trade)
-        db.commit()
-        db.refresh(new_trade)
-        return new_trade
-    except SQLAlchemyError as e:
-        print(f"Database error: {e}")
-        db.rollback()
-    finally:
-        db.close()
-
-def get_last_trades(telegram_id: int):
-    """استرجاع آخر الصفقات للمستخدم."""
-    db = SessionLocal()
-    try:
-        trades = db.query(Trade).filter(Trade.user_id == telegram_id).order_by(Trade.timestamp.desc()).all()
-        return trades
-    finally:
-        db.close()
+def get_last_trades(user_id):
+    """Retrieves the last recorded trades for a user."""
+    trades = user_database.get(user_id, {}).get("last_trades", [])
+    # Convert timestamp back to datetime object if needed, but for display string is fine
+    return trades
