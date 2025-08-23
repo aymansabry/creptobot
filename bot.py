@@ -1,5 +1,3 @@
-import os
-import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -10,67 +8,50 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+import os
 from trading import start_arbitrage, stop_arbitrage
 
-# إعداد التسجيل
+# إعداد اللوج
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# المتغيرات البيئية
+# متغير البيئة
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-
-# --------- أوامر البوت ---------
+# ====== Handlers ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [
-            InlineKeyboardButton("▶️ تشغيل المراجحة", callback_data="start"),
-            InlineKeyboardButton("⏹ إيقاف", callback_data="stop"),
-        ],
-        [InlineKeyboardButton("ℹ️ مساعدة", callback_data="help")],
+        [InlineKeyboardButton("▶️ بدء المراجحة", callback_data="start")],
+        [InlineKeyboardButton("⏹ إيقاف المراجحة", callback_data="stop")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("أهلاً! 👋\nاختر أمر:", reply_markup=reply_markup)
+    await update.message.reply_text("مرحباً! أنا بوت المراجحة 🤖", reply_markup=reply_markup)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📖 الأوامر المتاحة:\n"
-        "/start - القائمة الرئيسية\n"
-        "▶️ تشغيل المراجحة\n"
-        "⏹ إيقاف\n"
-        "ℹ️ مساعدة"
-    )
+    await update.message.reply_text("استخدم الأزرار للتحكم في البوت.")
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     if query.data == "start":
-        await query.edit_message_text("🚀 تم تشغيل بوت المراجحة")
-        asyncio.create_task(start_arbitrage())
+        await query.edit_message_text("🚀 بدأنا المراجحة...")
+        await start_arbitrage()
     elif query.data == "stop":
-        await query.edit_message_text("🛑 تم إيقاف بوت المراجحة")
+        await query.edit_message_text("🛑 تم إيقاف المراجحة.")
         await stop_arbitrage()
-    elif query.data == "help":
-        await query.edit_message_text(
-            "📖 الأوامر المتاحة:\n"
-            "/start - القائمة الرئيسية\n"
-            "▶️ تشغيل المراجحة\n"
-            "⏹ إيقاف\n"
-            "ℹ️ مساعدة"
-        )
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ استخدم الأزرار أو اكتب /help لعرض المساعدة.")
+    await update.message.reply_text("📌 استخدم الأزرار للتحكم في البوت.")
 
 
-# --------- تشغيل التطبيق ---------
-async def main():
+# ====== Main ======
+def main():
     if not BOT_TOKEN:
         raise ValueError("⚠️ لم يتم العثور على TELEGRAM_BOT_TOKEN في المتغيرات البيئية")
 
@@ -83,8 +64,8 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     logger.info("🤖 البوت يعمل الآن...")
-    await app.run_polling()
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
