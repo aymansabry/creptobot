@@ -29,10 +29,15 @@ ai = AIStrategy()
 # ====== Command Handlers ======
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await create_user(user.id)
-    await update.message.reply_text(
-        "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help."
-    )
+    # Add check to ensure user object is not None
+    if user:
+        await create_user(user.id)
+        await update.message.reply_text(
+            "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help."
+        )
+    else:
+        logger.warning("Received a start command without a user object.")
+        await update.message.reply_text("❌ حدث خطأ. برجاء المحاولة مرة أخرى لاحقاً.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -53,7 +58,11 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        logger.warning("Received start_trading command without a user.")
+        return
+    
     amount = get_amount(user_id)
     if not amount:
         await update.message.reply_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات واكتب **Set Amount**.")
@@ -62,12 +71,20 @@ async def start_trading_command(update: Update, context: ContextTypes.DEFAULT_TY
     asyncio.create_task(start_arbitrage(user_id))
 
 async def stop_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        logger.warning("Received stop_trading command without a user.")
+        return
+    
     await stop_arbitrage(user_id)
     await update.message.reply_text("🛑 تم إيقاف التداول.")
 
 async def market_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        logger.warning("Received market_status command without a user.")
+        return
+    
     await update.message.reply_text("⏳ جاري تحليل السوق، انتظر لحظة...")
     try:
         client = await get_client_for_user(user_id)
@@ -84,21 +101,29 @@ async def market_status_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("✅ انتهى التحليل.")
 
 async def reports_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        logger.warning("Received reports command without a user.")
+        return
+    
     trades = get_last_trades(user_id)
     if not trades:
         await update.message.reply_text("📜 لا توجد صفقات مسجلة بعد.")
         return
     text = "📜 آخر الصفقات:\n"
     for t in trades[:10]:
-        ts = getattr(t, "timestamp", None)
-        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else ""
-        text += f"• {t.pair} | ربح: {t.profit:.6f}$ | {ts_str}\n"
+        ts = t.get("timestamp")
+        ts_str = ts.split('T')[0] if ts else "" # Simplified for display
+        text += f"• {t.get('pair')} | ربح: {t.get('profit'):.6f}$ | {ts_str}\n"
     await update.message.reply_text(text)
 
 # ====== Message Handler (for text input) ======
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        logger.warning("Received a text message without a user.")
+        return
+
     text = (update.message.text or "").strip()
 
     stage = context.user_data.get("stage")
