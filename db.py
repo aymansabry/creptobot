@@ -1,23 +1,31 @@
 # db.py
 import mysql.connector
 import logging
+import os
+from urllib.parse import urlparse
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Replace with your actual database credentials
-DB_HOST = "localhost"
-DB_USER = "your_user"
-DB_PASSWORD = "your_password"
-DB_NAME = "trading_bot_db"
-
 def get_db_connection():
-    """Establishes a connection to the MySQL database."""
+    """
+    Establishes a connection to the MySQL database using DATABASE_URL environment variable.
+    """
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        logger.error("DATABASE_URL environment variable is not set.")
+        return None
+
+    # Parse the DATABASE_URL
+    url = urlparse(database_url)
+    
     try:
         conn = mysql.connector.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME
+            host=url.hostname,
+            user=url.username,
+            password=url.password,
+            database=url.path[1:],  # Remove the leading '/'
+            port=url.port
         )
         return conn
     except mysql.connector.Error as e:
@@ -25,13 +33,16 @@ def get_db_connection():
         return None
 
 def create_tables():
-    """Creates necessary tables if they don't exist."""
+    """
+    Creates necessary tables if they don't exist.
+    """
     conn = get_db_connection()
     if not conn:
         return
     
     cursor = conn.cursor()
     try:
+        # users table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -40,6 +51,7 @@ def create_tables():
                 amount DECIMAL(10, 2)
             )
         """)
+        # trades table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS trades (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -59,7 +71,9 @@ def create_tables():
         conn.close()
 
 def create_user(user_id):
-    """Inserts a new user into the database if they don't exist."""
+    """
+    Inserts a new user into the database if they don't exist.
+    """
     conn = get_db_connection()
     if not conn:
         return
@@ -80,7 +94,9 @@ def create_user(user_id):
         conn.close()
 
 def save_api_keys(user_id, api_key, api_secret):
-    """Saves API keys for a user."""
+    """
+    Saves API keys for a user.
+    """
     conn = get_db_connection()
     if not conn:
         return
@@ -100,7 +116,9 @@ def save_api_keys(user_id, api_key, api_secret):
         conn.close()
 
 def get_user_api_keys(user_id):
-    """Retrieves API keys for a user."""
+    """
+    Retrieves API keys for a user.
+    """
     conn = get_db_connection()
     if not conn:
         return {}
@@ -118,7 +136,9 @@ def get_user_api_keys(user_id):
         conn.close()
 
 def save_amount(user_id, amount):
-    """Saves the trading amount for a user."""
+    """
+    Saves the trading amount for a user.
+    """
     conn = get_db_connection()
     if not conn:
         return
@@ -135,7 +155,9 @@ def save_amount(user_id, amount):
         conn.close()
 
 def get_amount(user_id):
-    """Retrieves the trading amount for a user."""
+    """
+    Retrieves the trading amount for a user.
+    """
     conn = get_db_connection()
     if not conn:
         return 0.0
@@ -153,7 +175,9 @@ def get_amount(user_id):
         conn.close()
 
 def save_last_trades(user_id, pair, profit, timestamp):
-    """Saves the last trade details for a user."""
+    """
+    Saves the last trade details for a user.
+    """
     conn = get_db_connection()
     if not conn:
         return
@@ -173,7 +197,9 @@ def save_last_trades(user_id, pair, profit, timestamp):
         conn.close()
 
 def get_last_trades(user_id):
-    """Retrieves the last recorded trades for a user."""
+    """
+    Retrieves the last recorded trades for a user.
+    """
     conn = get_db_connection()
     if not conn:
         return []
