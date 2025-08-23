@@ -362,15 +362,15 @@ async def enhanced_trading_cycle(user_id: int, bot_instance):
                     logger.info(f"Stopping trading cycle for user {user_id}.")
                     break # Exit the loop
                 
-                exchange = await get_exchange(user_id)
+                exchange = await get_exchange(user.telegram_id)
                 if not exchange:
-                    await bot_instance.send_message(user_id, "❌ Failed to connect to the exchange. Stopping trading.")
+                    await bot_instance.send_message(user.telegram_id, "❌ Failed to connect to the exchange. Stopping trading.")
                     user.investment_status = "stopped"
                     break
                 
                 invest_amt = float(user.base_investment or 0.0)
                 if invest_amt < 5.0:
-                    await bot_instance.send_message(user_id, "❌ Please set an investment amount (min 5 USDT). Stopping trading.")
+                    await bot_instance.send_message(user.telegram_id, "❌ Please set an investment amount (min 5 USDT). Stopping trading.")
                     user.investment_status = "stopped"
                     break
                 
@@ -383,7 +383,7 @@ async def enhanced_trading_cycle(user_id: int, bot_instance):
                     supported_paths = PENTA_PATHS
 
                 if not supported_paths:
-                    await bot_instance.send_message(user_id, "🔍 No supported paths found for this trading mode. Stopping trading.")
+                    await bot_instance.send_message(user.telegram_id, "🔍 No supported paths found for this trading mode. Stopping trading.")
                     user.investment_status = "stopped"
                     break
 
@@ -399,13 +399,13 @@ async def enhanced_trading_cycle(user_id: int, bot_instance):
                 if best_opportunity:
                     profit_percent = (best_profit / invest_amt) * 100
                     await bot_instance.send_message(
-                        user_id,
+                        user.telegram_id,
                         f"📈 Profitable opportunity found: {' → '.join(best_opportunity)}\n"
                         f"Expected Profit: {best_profit:.6f} USDT ({profit_percent:.2f}%)"
                     )
-                    await execute_arbitrage(user_id, best_opportunity, invest_amt, bot_instance)
+                    await execute_arbitrage(user.telegram_id, best_opportunity, invest_amt, bot_instance)
                 else:
-                    await bot_instance.send_message(user_id, "🔍 No profitable opportunities found at the moment.")
+                    await bot_instance.send_message(user.telegram_id, "🔍 No profitable opportunities found at the moment.")
 
             await asyncio.sleep(ARBITRAGE_CYCLE)
 
@@ -498,14 +498,15 @@ async def back_main(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.message.edit_text("🏠 القائمة الرئيسية", reply_markup=main_menu_keyboard())
 
 @router.callback_query(F.data == "menu_exchanges")
-async def menu_exchanges(callback_query: types.CallbackQuery):
+async def menu_exchanges(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("Binance", callback_data="exchange_binance"))
     kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
     await callback_query.message.edit_text("💹 اختر المنصة:", reply_markup=kb)
+    await state.set_state(ExchangeStates.choosing_exchange)
 
-@router.callback_query(F.data.startswith("exchange_"), state=None)
+@router.callback_query(F.data.startswith("exchange_"), ExchangeStates.choosing_exchange)
 async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     exchange_name = callback_query.data.split("_")[1].capitalize()
