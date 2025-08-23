@@ -33,7 +33,7 @@ def _kbd_main():
         [
             [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings")],
             [InlineKeyboardButton("💰 بدء التداول", callback_data="start_trading"),
-             InlineKeyboardButton("🛑 إيقاف التداول", callback_data="stop_trading")],
+             InlineKeyboardButton("� إيقاف التداول", callback_data="stop_trading")],
             [InlineKeyboardButton("📊 حالة السوق", callback_data="market_status"),
              InlineKeyboardButton("📜 التقارير", callback_data="reports")],
         ]
@@ -99,6 +99,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات > مبلغ الاستثمار.")
             return
         await query.edit_message_text(f"💰 جاري بدء التداول بالمبلغ: {amount} USDT\n(سأعلمك بالنتائج)")
+        # Start arbitrage in a separate task
         asyncio.create_task(start_arbitrage(user_id))
         return
 
@@ -118,8 +119,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         tickers = await client.get_all_tickers()
         sample = ", ".join([t["symbol"] for t in tickers[:40]])
-        loop = asyncio.get_event_loop()
-        analysis = await loop.run_in_executor(None, lambda: ai.analyze({"sample_symbols": sample}))
+        analysis = await asyncio.to_thread(lambda: ai.analyze({"sample_symbols": sample}))
         chunks = [analysis[i:i+800] for i in range(0, len(analysis), 800)]
         for ch in chunks:
             await query.message.reply_text(f"📊 نصيحة OpenAI:\n{ch}")
@@ -200,3 +200,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+�
