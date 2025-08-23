@@ -23,6 +23,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 from aiogram.client.default import DefaultBotProperties
+from aiogram import Router
+from aiogram import F
+from aiogram.filters import CommandStart, Command
 
 # -----------------
 # Core Bot & Logging Setup
@@ -38,11 +41,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
-
-# Initialize the Bot and Dispatcher with new syntax
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
 
 # -----------------
 # Database Models & Setup
@@ -429,6 +427,8 @@ async def enhanced_trading_cycle(user_id: int, bot_instance):
 # -----------------
 # Bot Handlers & FSM
 # -----------------
+router = Router()
+
 class ExchangeStates(StatesGroup):
     choosing_exchange = State()
     entering_api_key = State()
@@ -476,7 +476,7 @@ def settings_keyboard():
     return kb
 
 # --- Actual Handlers ---
-@dp.message.register(types.Message, commands=["start", "help"])
+@router.message(CommandStart())
 async def cmd_start(message: types.Message):
     with db_session() as db:
         user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
@@ -491,13 +491,13 @@ async def cmd_start(message: types.Message):
         reply_markup=main_menu_keyboard()
     )
 
-@dp.callback_query.register(lambda c: c.data == "back_main", state="*")
+@router.callback_query(F.data == "back_main")
 async def back_main(callback_query: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback_query.answer()
     await callback_query.message.edit_text("🏠 القائمة الرئيسية", reply_markup=main_menu_keyboard())
 
-@dp.callback_query.register(lambda c: c.data == "menu_exchanges")
+@router.callback_query(F.data == "menu_exchanges")
 async def menu_exchanges(callback_query: types.CallbackQuery):
     await callback_query.answer()
     kb = types.InlineKeyboardMarkup()
@@ -505,7 +505,7 @@ async def menu_exchanges(callback_query: types.CallbackQuery):
     kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
     await callback_query.message.edit_text("💹 اختر المنصة:", reply_markup=kb)
 
-@dp.callback_query.register(lambda c: c.data.startswith("exchange_"), state=None)
+@router.callback_query(F.data.startswith("exchange_"), state=None)
 async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     exchange_name = callback_query.data.split("_")[1].capitalize()
@@ -513,19 +513,19 @@ async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext
     await state.update_data(exchange_name=exchange_name)
     await callback_query.message.edit_text(f"🔑 أدخل API Key لـ {exchange_name}:", reply_markup=back_keyboard())
 
-@dp.message.register(types.Message, state=ExchangeStates.entering_api_key)
+@router.message(ExchangeStates.entering_api_key)
 async def enter_api_key(message: types.Message, state: FSMContext):
     await state.update_data(api_key=message.text.strip())
     await state.set_state(ExchangeStates.entering_secret)
     await message.answer("🔒 أدخل Secret Key:", reply_markup=back_keyboard())
 
-@dp.message.register(types.Message, state=ExchangeStates.entering_secret)
+@router.message(ExchangeStates.entering_secret)
 async def enter_secret(message: types.Message, state: FSMContext):
     await state.update_data(secret=message.text.strip())
     await state.set_state(ExchangeStates.entering_password)
     await message.answer("🔑 أدخل Password (أو 'لا' إذا لم يكن موجوداً):", reply_markup=back_keyboard())
 
-@dp.message.register(types.Message, state=ExchangeStates.entering_password)
+@router.message(ExchangeStates.entering_password)
 async def enter_password(message: types.Message, state: FSMContext):
     data = await state.get_data()
     password = message.text.strip() if message.text.strip().lower() != "لا" else None
@@ -538,13 +538,13 @@ async def enter_password(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ تم حفظ بيانات المنصة بنجاح!", reply_markup=main_menu_keyboard())
 
-@dp.callback_query.register(lambda c: c.data == "menu_investment", state=None)
+@router.callback_query(F.data == "menu_investment", state=None)
 async def menu_investment(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     await state.set_state(InvestmentStates.entering_amount)
     await callback_query.message.edit_text("💵 أدخل مبلغ الاستثمار (الحد الأدنى 5 USDT):", reply_markup=back_keyboard())
 
-@dp.message.register(types.Message, state=InvestmentStates.entering_amount)
+@router.message(InvestmentStates.entering_amount)
 async def enter_investment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text)
@@ -560,12 +560,12 @@ async def enter_investment_amount(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ صيغة المبلغ غير صحيحة. يرجى إدخال رقم:")
 
-@dp.callback_query.register(lambda c: c.data == "menu_settings")
+@router.callback_query(F.data == "menu_settings")
 async def menu_settings(callback_query: types.CallbackQuery):
     await callback_query.answer()
     await callback_query.message.edit_text("⚙️ إعدادات التداول:", reply_markup=settings_keyboard())
 
-@dp.callback_query.register(lambda c: c.data.startswith("setting_"))
+@router.callback_query(F.data.startswith("setting_"))
 async def handle_settings(callback_query: types.CallbackQuery):
     await callback_query.answer()
     setting_type, setting_value = callback_query.data.split("_")[1:]
@@ -581,7 +581,7 @@ async def handle_settings(callback_query: types.CallbackQuery):
                 reply_markup=main_menu_keyboard()
             )
 
-@dp.callback_query.register(lambda c: c.data == "menu_start_trading")
+@router.callback_query(F.data == "menu_start_trading")
 async def menu_start_trading(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
@@ -595,7 +595,7 @@ async def menu_start_trading(callback_query: types.CallbackQuery):
             # Start the trading cycle in a background task
             asyncio.create_task(enhanced_trading_cycle(user.telegram_id, callback_query.bot))
 
-@dp.callback_query.register(lambda c: c.data == "menu_stop_bot")
+@router.callback_query(F.data == "menu_stop_bot")
 async def menu_stop_bot(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
@@ -604,7 +604,7 @@ async def menu_stop_bot(callback_query: types.CallbackQuery):
             user.investment_status = "stopped"
     await callback_query.message.edit_text("🛑 تم إيقاف البوت. لن يتم تنفيذ أي عمليات جديدة.", reply_markup=main_menu_keyboard())
 
-@dp.callback_query.register(lambda c: c.data == "menu_report")
+@router.callback_query(F.data == "menu_report")
 async def menu_report(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
@@ -618,18 +618,16 @@ async def menu_report(callback_query: types.CallbackQuery):
 # -----------------
 # Main Function
 # -----------------
-async def on_startup(dispatcher: Dispatcher):
+async def main():
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    dp = Dispatcher()
+    dp.include_router(router)
+    
     logger.info("Starting bot...")
     upgrade_database()
     logger.info("Database tables checked/upgraded successfully.")
 
-async def on_shutdown(dispatcher: Dispatcher):
-    logger.info("Shutting down bot...")
-    await dispatcher.storage.close()
-    await dispatcher.storage.wait_closed()
-    await dispatcher.bot.session.close()
+    await dp.start_polling(bot, storage=MemoryStorage())
 
 if __name__ == '__main__':
-    from aiogram import executor
-    logger.info("Starting bot polling...")
-    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+    asyncio.run(main())
