@@ -68,9 +68,16 @@ async def start_trading_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_id = update.effective_user.id
     amount = get_amount(user_id)
+    api_keys = get_user_api_keys(user_id)
+    
     if not amount:
         await update.message.reply_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات واكتب **Set Amount**.")
         return
+    
+    if not api_keys or not api_keys.get("api_key") or not api_keys.get("api_secret"):
+        await update.message.reply_text("❌ لم تسجل مفاتيح Binance بعد. اذهب للإعدادات واكتب **Link API**.")
+        return
+
     await update.message.reply_text(f"💰 جاري بدء التداول بالمبلغ: {amount} USDT\n(سأعلمك بالنتائج)")
     asyncio.create_task(start_arbitrage(user_id, context))
 
@@ -161,7 +168,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await save_amount(user_id, val)
             await update.message.reply_text(f"✅ تم حفظ المبلغ: {val} USDT")
         except Exception:
-            await update.message.reply_text("❌ ادخل مبلغاً صالحاً (مثل: 5).")
+            await update.message.reply_text("❌ ادخل مبلغاً صالحاً (مثال: 5).")
         context.user_data["stage"] = None
         return
     
