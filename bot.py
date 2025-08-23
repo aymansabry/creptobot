@@ -12,13 +12,13 @@ from telegram.ext import (
     filters,
 )
 
-# دوال وموديولات المشروع
+# Imports from other files
 from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades
 from trading import start_arbitrage, stop_arbitrage, get_client_for_user
 from ai_strategy import AIStrategy
 from datetime import datetime
 
-# إعداد اللوج
+# Logging setup
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ai = AIStrategy()
 
-# ====== مساعدة داخلية ======
+# ====== Inline Keyboards ======
 def _kbd_main():
     return InlineKeyboardMarkup(
         [
@@ -48,7 +48,7 @@ def _kbd_settings():
         ]
     )
 
-# ====== Handlers ======
+# ====== Command Handlers ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await create_user(user.id)
@@ -66,14 +66,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📜 التقارير — آخر الصفقات المسجلة"
     )
 
-# هذا هو الـ Handler الخاص بأوامر الأزرار (Callback Queries)
+# ====== Callback Query Handler (for inline buttons) ======
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     data = query.data
 
-    # إعدادات
+    # Settings
     if data == "settings":
         await query.edit_message_text("⚙️ الإعدادات — اختر:", reply_markup=_kbd_settings())
         return
@@ -92,7 +92,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("💵 أرسل مبلغ الاستثمار بالدولار (مثال: 5).")
         return
 
-    # بدء / إيقاف التداول
+    # Trading controls
     if data == "start_trading":
         amount = get_amount(user_id)
         if not amount:
@@ -107,7 +107,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🛑 تم إيقاف التداول.")
         return
 
-    # حالة السوق -> سنجلب تحليل من OpenAI
+    # Market Status
     if data == "market_status":
         await query.edit_message_text("⏳ جاري تحليل السوق، انتظر لحظة...")
         try:
@@ -126,7 +126,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("✅ انتهى التحليل.", reply_markup=_kbd_main())
         return
 
-    # تقارير
+    # Reports
     if data == "reports":
         trades = get_last_trades(user_id)
         if not trades:
@@ -140,7 +140,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=_kbd_main())
         return
 
-# هذا هو الـ Handler الخاص بالرسائل النصية
+# ====== Message Handler (for text input) ======
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = (update.message.text or "").strip()
@@ -189,7 +189,7 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Commands & Callbacks
+    # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
