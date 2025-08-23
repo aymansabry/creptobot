@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 # Imports from other files
-from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades
+from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades, create_tables
 from trading import start_arbitrage, stop_arbitrage, get_client_for_user
 from ai_strategy import AIStrategy
 from datetime import datetime
@@ -28,7 +28,6 @@ ai = AIStrategy()
 
 # ====== Command Handlers ======
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Defensive programming: Check if update and user are valid
     if not update or not update.effective_user:
         logger.warning("Received a start command without a valid update or user object.")
         return
@@ -36,7 +35,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await create_user(user.id)
     await update.message.reply_text(
-        "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help."
+        "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help.\n\n⚠️ ملاحظة: تأكد من أن متغيرات البيئة مضبوطة بشكل صحيح وأنك قمت بإنشاء الجداول في قاعدة البيانات."
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,11 +66,11 @@ async def start_trading_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     user_id = update.effective_user.id
-    amount = get_amount(user_id)
-    api_keys = get_user_api_keys(user_id)
+    amount = await get_amount(user_id)
+    api_keys = await get_user_api_keys(user_id)
     
-    if not amount:
-        await update.message.reply_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات واكتب **Set Amount**.")
+    if not amount or float(amount) <= 0:
+        await update.message.reply_text("❌ لم تحدد مبلغًا صالحًا بعد. اذهب للإعدادات واكتب **Set Amount**.")
         return
     
     if not api_keys or not api_keys.get("api_key") or not api_keys.get("api_secret"):
@@ -117,7 +116,7 @@ async def reports_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     user_id = update.effective_user.id
-    trades = get_last_trades(user_id)
+    trades = await get_last_trades(user_id)
     if not trades:
         await update.message.reply_text("📜 لا توجد صفقات مسجلة بعد.")
         return
@@ -203,6 +202,9 @@ def main():
     
     # Add handler for text messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    
+    # Run the table creation one time
+    asyncio.run(create_tables())
 
     logger.info("🤖 البوت يعمل الآن...")
     app.run_polling(poll_interval=1.0)
