@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # دوال وموديولات المشروع (تأكد الملفات موجودة كما اتفقنا)
 from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades
-from trading import start_arbitrage, stop_arbitrage, get_client_for_user  # تم تغيير الاسم
+from trading import start_arbitrage, stop_arbitrage, get_client_for_user
 from ai_strategy import AIStrategy
 from datetime import datetime
 
@@ -51,7 +51,6 @@ def _kbd_settings():
 # ====== Handlers ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # تم تصحيح استدعاء الدالة لتمرير معرف المستخدم فقط
     await create_user(user.id)
     await update.message.reply_text(
         "✅ تم التسجيل بنجاح.\nاختر من القائمة:", reply_markup=_kbd_main()
@@ -107,7 +106,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "stop_trading":
-        # تم تعديل استدعاء الدالة لإيقاف التداول للمستخدم الحالي فقط
         await stop_arbitrage(user_id)
         await query.edit_message_text("🛑 تم إيقاف التداول.")
         return
@@ -116,7 +114,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "market_status":
         await query.edit_message_text("⏳ جاري تحليل السوق، انتظر لحظة...")
         try:
-            # تم تعديل اسم الدالة
             client = await get_client_for_user(user_id)
         except ValueError:
             await query.edit_message_text("❌ لم تسجل مفاتيح Binance بعد. اذهب للإعدادات.")
@@ -133,24 +130,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chunks = [analysis[i:i+800] for i in range(0, len(analysis), 800)]
         for ch in chunks:
             await query.message.reply_text(f"📊 نصيحة OpenAI:\n{ch}")
-        await query.message.reply_text("✅ انتهى التحليل.")
+        # بعد إرسال التحليل، نعيد إرسال القائمة الرئيسية
+        await query.message.reply_text("✅ انتهى التحليل.", reply_markup=_kbd_main())
         return
 
     # تقارير
     if data == "reports":
-        # تم تعديل استدعاء الدالة لتمرير معرف المستخدم
         trades = get_last_trades(user_id)
         if not trades:
-            await query.edit_message_text("📜 لا توجد صفقات مسجلة بعد.")
+            await query.edit_message_text("📜 لا توجد صفقات مسجلة بعد.", reply_markup=_kbd_main())
             return
         # صياغة بسيطة
         text = "📜 آخر الصفقات:\n"
         for t in trades[:10]:
-            # t.pair, t.profit, t.timestamp حسب جدولك
             ts = getattr(t, "timestamp", None)
             ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else ""
             text += f"• {t.pair} | ربح: {t.profit:.6f}$ | {ts_str}\n"
-        await query.edit_message_text(text)
+        # بعد إرسال التقرير، نعيد إرسال القائمة الرئيسية
+        await query.edit_message_text(text, reply_markup=_kbd_main())
         return
 
 # استقبال الرسائل — نعالج إدخال المفاتيح أو المبلغ اعتمادًا على الـ stage
@@ -170,25 +167,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if stage == "api_secret":
         api_key = context.user_data.pop("tmp_api_key", None)
         api_secret = text
-        # سنحاول حفظ المفاتيح والتحقق منها عبر محاولة إنشاء client
         try:
-            # حفظ أوليًا (DB)
-            # تم تصحيح استدعاء الدالة، تم إضافة await
             await save_api_keys(user_id, api_key, api_secret)
-            # تحقق عملي: حاول إنشاء عميل Binance والتحقق من الحساب
             try:
-                # تم تعديل اسم الدالة
                 client = await get_client_for_user(user_id)
-                # اختبار بسيط لجلب الحساب
-                await client.get_account()  # سيؤكد صلاحية المفاتيح
-                await update.message.reply_text("✅ تم التحقق من المفاتيح وحفظها بنجاح.")
+                await client.get_account()
+                await update.message.reply_text("✅ تم التحقق من المفاتيح وحفظها بنجاح.", reply_markup=_kbd_main())
             except Exception as e:
-                # إذا فشل، نحذف المفاتيح المحفوظة ونبلغ المستخدم
-                # تم تصحيح استدعاء الدالة، تم إضافة await
                 await save_api_keys(user_id, None, None)
-                await update.message.reply_text(f"❌ التحقق فشل: {e}\nتأكد من صلاحية المفاتيح وصلاحية التداول.")
+                await update.message.reply_text(f"❌ التحقق فشل: {e}\nتأكد من صلاحية المفاتيح وصلاحية التداول.", reply_markup=_kbd_main())
         except Exception as e:
-            await update.message.reply_text(f"❌ خطأ في حفظ المفاتيح: {e}")
+            await update.message.reply_text(f"❌ خطأ في حفظ المفاتيح: {e}", reply_markup=_kbd_main())
         context.user_data["stage"] = None
         return
 
@@ -198,28 +187,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             val = float(text)
             if val <= 0:
                 raise ValueError("المبلغ يجب أن يكون أكبر من 0")
-            # حد أقصى استثمار كما قلت قبل: 10000
             if val > 10000:
-                await update.message.reply_text("⚠️ الحد الأقصى للاستثمار 10000 USDT.")
+                await update.message.reply_text("⚠️ الحد الأقصى للاستثمار 10000 USDT.", reply_markup=_kbd_main())
                 context.user_data["stage"] = None
                 return
             await save_amount(user_id, val)
-            await update.message.reply_text(f"✅ تم حفظ المبلغ: {val} USDT")
+            await update.message.reply_text(f"✅ تم حفظ المبلغ: {val} USDT", reply_markup=_kbd_main())
         except Exception:
-            await update.message.reply_text("❌ ادخل مبلغاً صالحاً (مثل: 5).")
+            await update.message.reply_text("❌ ادخل مبلغاً صالحاً (مثل: 5).", reply_markup=_kbd_main())
         context.user_data["stage"] = None
         return
 
     # استقبال مفاتيح/مبلغ بشكل CSV مباشر (fallback)
     if "," in text and len(text.split(",")) == 2:
         api_key, api_secret = text.split(",", 1)
-        # تم تصحيح استدعاء الدالة، تم إضافة await
         await save_api_keys(user_id, api_key.strip(), api_secret.strip())
-        await update.message.reply_text("✅ تم حفظ المفاتيح (أدخل /start أو افتح القائمة).")
+        await update.message.reply_text("✅ تم حفظ المفاتيح.", reply_markup=_kbd_main())
         return
 
     # أو أي رسالة عامة
-    await update.message.reply_text("📌 استخدم الأزرار أو اكتب /help لعرض الأوامر.")
+    await update.message.reply_text("📌 استخدم الأزرار أو اكتب /help لعرض الأوامر.", reply_markup=_kbd_main())
 
 # ====== Main runner ======
 def main():
