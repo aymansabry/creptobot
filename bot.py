@@ -12,7 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-# دوال وموديولات المشروع (تأكد الملفات موجودة كما اتفقنا)
+# دوال وموديولات المشروع
 from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades
 from trading import start_arbitrage, stop_arbitrage, get_client_for_user
 from ai_strategy import AIStrategy
@@ -33,7 +33,7 @@ def _kbd_main():
         [
             [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings")],
             [InlineKeyboardButton("💰 بدء التداول", callback_data="start_trading"),
-             InlineKeyboardButton("� إيقاف التداول", callback_data="stop_trading")],
+             InlineKeyboardButton("🛑 إيقاف التداول", callback_data="stop_trading")],
             [InlineKeyboardButton("📊 حالة السوق", callback_data="market_status"),
              InlineKeyboardButton("📜 التقارير", callback_data="reports")],
         ]
@@ -200,4 +200,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-�
