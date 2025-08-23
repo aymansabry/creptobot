@@ -1,219 +1,213 @@
 # db.py
-import mysql.connector
+import asyncio
 import logging
 import os
 from urllib.parse import urlparse
-from datetime import datetime
+import aiomysql
 
 logger = logging.getLogger(__name__)
 
-def get_db_connection():
+# ====== إعدادات الاتصال بقاعدة البيانات - يتم جلبها من متغيرات البيئة تلقائياً ======
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+async def get_db_connection():
     """
-    Establishes a connection to the MySQL database using DATABASE_URL environment variable.
+    تأسيس اتصال غير متزامن بقاعدة بيانات MySQL باستخدام DATABASE_URL.
     """
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
+    if not DATABASE_URL:
         logger.error("DATABASE_URL environment variable is not set.")
         return None
 
-    # Parse the DATABASE_URL
-    url = urlparse(database_url)
-    
     try:
-        conn = mysql.connector.connect(
+        url = urlparse(DATABASE_URL)
+        conn = await aiomysql.connect(
             host=url.hostname,
             user=url.username,
             password=url.password,
-            database=url.path[1:],  # Remove the leading '/'
-            port=url.port
+            db=url.path[1:],
+            port=url.port,
+            autocommit=True, # Ensure that the changes are committed instantly
+            loop=asyncio.get_event_loop()
         )
         return conn
-    except mysql.connector.Error as e:
-        logger.error(f"Error connecting to MySQL database: {e}")
+    except Exception as e:
+        logger.error(f"خطأ في الاتصال بقاعدة بيانات MySQL: {e}")
         return None
 
-def create_tables():
+async def create_tables():
     """
-    Creates necessary tables if they don't exist.
+    إنشاء الجداول الضرورية إذا لم تكن موجودة.
     """
-    conn = get_db_connection()
+    conn = await get_db_connection()
     if not conn:
         return
     
-    cursor = conn.cursor()
-    try:
-        # users table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                api_key VARCHAR(255),
-                api_secret VARCHAR(255),
-                amount DECIMAL(10, 2)
+    async with conn.cursor() as cursor:
+        try:
+            # جدول المستخدمين
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    api_key VARCHAR(255),
+                    api_secret VARCHAR(255),
+                    amount DECIMAL(10, 2)
+                )
+            """)
+            # جدول الصفقات
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    pair VARCHAR(50),
+                    profit DECIMAL(10, 6),
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            """)
+            await conn.commit()
+            logger.info("تم إنشاء الجداول بنجاح أو أنها موجودة بالفعل.")
+        except Exception as e:
+            logger.error(f"خطأ في إنشاء الجداول: {e}")
+        finally:
+            conn.close()
+
+async def create_user(user_id):
+    """
+    إضافة مستخدم جديد إلى قاعدة البيانات إذا لم يكن موجودًا.
+    """
+    conn = await get_db_connection()
+    if not conn:
+        return
+    
+    async with conn.cursor() as cursor:
+        try:
+            await cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+            if not await cursor.fetchone():
+                await cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
+                await conn.commit()
+                logger.info(f"تم إنشاء المستخدم {user_id} في قاعدة البيانات.")
+            else:
+                logger.info(f"المستخدم {user_id} موجود بالفعل.")
+        except Exception as e:
+            logger.error(f"خطأ في إنشاء المستخدم: {e}")
+        finally:
+            conn.close()
+
+async def save_api_keys(user_id, api_key, api_secret):
+    """
+    حفظ مفاتيح API للمستخدم.
+    """
+    conn = await get_db_connection()
+    if not conn:
+        return
+    
+    async with conn.cursor() as cursor:
+        try:
+            await cursor.execute(
+                "UPDATE users SET api_key = %s, api_secret = %s WHERE user_id = %s",
+                (api_key, api_secret, user_id)
             )
-        """)
-        # trades table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS trades (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id BIGINT,
-                pair VARCHAR(50),
-                profit DECIMAL(10, 6),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-            )
-        """)
-        conn.commit()
-        logger.info("Tables created or already exist.")
-    except mysql.connector.Error as e:
-        logger.error(f"Error creating tables: {e}")
-    finally:
-        cursor.close()
-        conn.close()
+            await conn.commit()
+            logger.info(f"تم حفظ مفاتيح API للمستخدم {user_id}.")
+        except Exception as e:
+            logger.error(f"خطأ في حفظ مفاتيح API: {e}")
+        finally:
+            conn.close()
 
-def create_user(user_id):
+async def get_user_api_keys(user_id):
     """
-    Inserts a new user into the database if they don't exist.
+    استرجاع مفاتيح API للمستخدم.
     """
-    conn = get_db_connection()
-    if not conn:
-        return
-    
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-        if not cursor.fetchone():
-            cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
-            conn.commit()
-            logger.info(f"User {user_id} created in the database.")
-        else:
-            logger.info(f"User {user_id} already exists.")
-    except mysql.connector.Error as e:
-        logger.error(f"Error creating user: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-
-def save_api_keys(user_id, api_key, api_secret):
-    """
-    Saves API keys for a user.
-    """
-    conn = get_db_connection()
-    if not conn:
-        return
-    
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "UPDATE users SET api_key = %s, api_secret = %s WHERE user_id = %s",
-            (api_key, api_secret, user_id)
-        )
-        conn.commit()
-        logger.info(f"API keys saved for user {user_id}.")
-    except mysql.connector.Error as e:
-        logger.error(f"Error saving API keys: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-
-def get_user_api_keys(user_id):
-    """
-    Retrieves API keys for a user.
-    """
-    conn = get_db_connection()
+    conn = await get_db_connection()
     if not conn:
         return {}
     
-    cursor = conn.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT api_key, api_secret FROM users WHERE user_id = %s", (user_id,))
-        result = cursor.fetchone()
-        return result if result else {}
-    except mysql.connector.Error as e:
-        logger.error(f"Error getting API keys: {e}")
-        return {}
-    finally:
-        cursor.close()
-        conn.close()
+    async with conn.cursor(aiomysql.DictCursor) as cursor:
+        try:
+            await cursor.execute("SELECT api_key, api_secret FROM users WHERE user_id = %s", (user_id,))
+            result = await cursor.fetchone()
+            return result if result else {}
+        except Exception as e:
+            logger.error(f"خطأ في استرجاع مفاتيح API: {e}")
+            return {}
+        finally:
+            conn.close()
 
-def save_amount(user_id, amount):
+async def save_amount(user_id, amount):
     """
-    Saves the trading amount for a user.
+    حفظ مبلغ التداول للمستخدم.
     """
-    conn = get_db_connection()
+    conn = await get_db_connection()
     if not conn:
         return
     
-    cursor = conn.cursor()
-    try:
-        cursor.execute("UPDATE users SET amount = %s WHERE user_id = %s", (amount, user_id))
-        conn.commit()
-        logger.info(f"Amount {amount} saved for user {user_id}.")
-    except mysql.connector.Error as e:
-        logger.error(f"Error saving amount: {e}")
-    finally:
-        cursor.close()
-        conn.close()
+    async with conn.cursor() as cursor:
+        try:
+            await cursor.execute("UPDATE users SET amount = %s WHERE user_id = %s", (amount, user_id))
+            await conn.commit()
+            logger.info(f"تم حفظ المبلغ {amount} للمستخدم {user_id}.")
+        except Exception as e:
+            logger.error(f"خطأ في حفظ المبلغ: {e}")
+        finally:
+            conn.close()
 
-def get_amount(user_id):
+async def get_amount(user_id):
     """
-    Retrieves the trading amount for a user.
+    استرجاع مبلغ التداول للمستخدم.
     """
-    conn = get_db_connection()
+    conn = await get_db_connection()
     if not conn:
         return 0.0
     
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT amount FROM users WHERE user_id = %s", (user_id,))
-        result = cursor.fetchone()
-        return result[0] if result and result[0] else 0.0
-    except mysql.connector.Error as e:
-        logger.error(f"Error getting amount: {e}")
-        return 0.0
-    finally:
-        cursor.close()
-        conn.close()
+    async with conn.cursor() as cursor:
+        try:
+            await cursor.execute("SELECT amount FROM users WHERE user_id = %s", (user_id,))
+            result = await cursor.fetchone()
+            return result[0] if result and result[0] else 0.0
+        except Exception as e:
+            logger.error(f"خطأ في استرجاع المبلغ: {e}")
+            return 0.0
+        finally:
+            conn.close()
 
-def save_last_trades(user_id, pair, profit, timestamp):
+async def save_last_trades(user_id, pair, profit):
     """
-    Saves the last trade details for a user.
+    حفظ تفاصيل آخر صفقة للمستخدم.
     """
-    conn = get_db_connection()
+    conn = await get_db_connection()
     if not conn:
         return
     
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO trades (user_id, pair, profit, timestamp) VALUES (%s, %s, %s, %s)",
-            (user_id, pair, profit, timestamp)
-        )
-        conn.commit()
-        logger.info(f"Trade for user {user_id} saved.")
-    except mysql.connector.Error as e:
-        logger.error(f"Error saving trade: {e}")
-    finally:
-        cursor.close()
-        conn.close()
+    async with conn.cursor() as cursor:
+        try:
+            await cursor.execute(
+                "INSERT INTO trades (user_id, pair, profit) VALUES (%s, %s, %s)",
+                (user_id, pair, profit)
+            )
+            await conn.commit()
+            logger.info(f"تم حفظ الصفقة للمستخدم {user_id}.")
+        except Exception as e:
+            logger.error(f"خطأ في حفظ الصفقة: {e}")
+        finally:
+            conn.close()
 
-def get_last_trades(user_id):
+async def get_last_trades(user_id):
     """
-    Retrieves the last recorded trades for a user.
+    استرجاع آخر الصفقات المسجلة للمستخدم.
     """
-    conn = get_db_connection()
+    conn = await get_db_connection()
     if not conn:
         return []
     
-    cursor = conn.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT pair, profit, timestamp FROM trades WHERE user_id = %s ORDER BY timestamp DESC LIMIT 10", (user_id,))
-        return cursor.fetchall()
-    except mysql.connector.Error as e:
-        logger.error(f"Error getting trades: {e}")
-        return []
-    finally:
-        cursor.close()
-        conn.close()
+    async with conn.cursor(aiomysql.DictCursor) as cursor:
+        try:
+            await cursor.execute("SELECT pair, profit, timestamp FROM trades WHERE user_id = %s ORDER BY timestamp DESC LIMIT 10", (user_id,))
+            return await cursor.fetchall()
+        except Exception as e:
+            logger.error(f"خطأ في استرجاع الصفقات: {e}")
+            return []
+        finally:
+            conn.close()
 
 if __name__ == "__main__":
-    create_tables()
+    asyncio.run(create_tables())
