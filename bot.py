@@ -28,18 +28,20 @@ ai = AIStrategy()
 
 # ====== Command Handlers ======
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Defensive programming: Check if update and user are valid
+    if not update or not update.effective_user:
+        logger.warning("Received a start command without a valid update or user object.")
+        return
+
     user = update.effective_user
-    # Add check to ensure user object is not None
-    if user:
-        await create_user(user.id)
-        await update.message.reply_text(
-            "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help."
-        )
-    else:
-        logger.warning("Received a start command without a user object.")
-        await update.message.reply_text("❌ حدث خطأ. برجاء المحاولة مرة أخرى لاحقاً.")
+    await create_user(user.id)
+    await update.message.reply_text(
+        "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help."
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update or not update.message:
+        return
     await update.message.reply_text(
         "📝 قائمة الأوامر المتاحة:\n"
         "• /start — بدء البوت والبدء في استخدامه\n"
@@ -51,6 +53,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update or not update.message:
+        return
     await update.message.reply_text(
         "⚙️ الإعدادات — اختر:\n"
         "1. اكتب **Link API** لربط مفاتيح منصات التداول.\n"
@@ -58,33 +62,33 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else None
-    if not user_id:
-        logger.warning("Received start_trading command without a user.")
+    if not update or not update.effective_user or not update.message:
+        logger.warning("Received start_trading command without a valid update or user.")
         return
     
+    user_id = update.effective_user.id
     amount = get_amount(user_id)
     if not amount:
         await update.message.reply_text("❌ لم تحدد مبلغًا بعد. اذهب للإعدادات واكتب **Set Amount**.")
         return
     await update.message.reply_text(f"💰 جاري بدء التداول بالمبلغ: {amount} USDT\n(سأعلمك بالنتائج)")
-    asyncio.create_task(start_arbitrage(user_id))
+    asyncio.create_task(start_arbitrage(user_id, context))
 
 async def stop_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else None
-    if not user_id:
-        logger.warning("Received stop_trading command without a user.")
+    if not update or not update.effective_user or not update.message:
+        logger.warning("Received stop_trading command without a valid update or user.")
         return
     
+    user_id = update.effective_user.id
     await stop_arbitrage(user_id)
     await update.message.reply_text("🛑 تم إيقاف التداول.")
 
 async def market_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else None
-    if not user_id:
-        logger.warning("Received market_status command without a user.")
+    if not update or not update.effective_user or not update.message:
+        logger.warning("Received market_status command without a valid update or user.")
         return
     
+    user_id = update.effective_user.id
     await update.message.reply_text("⏳ جاري تحليل السوق، انتظر لحظة...")
     try:
         client = await get_client_for_user(user_id)
@@ -101,11 +105,11 @@ async def market_status_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("✅ انتهى التحليل.")
 
 async def reports_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else None
-    if not user_id:
-        logger.warning("Received reports command without a user.")
+    if not update or not update.effective_user or not update.message:
+        logger.warning("Received reports command without a valid update or user.")
         return
     
+    user_id = update.effective_user.id
     trades = get_last_trades(user_id)
     if not trades:
         await update.message.reply_text("📜 لا توجد صفقات مسجلة بعد.")
@@ -119,11 +123,11 @@ async def reports_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ====== Message Handler (for text input) ======
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else None
-    if not user_id:
-        logger.warning("Received a text message without a user.")
+    if not update or not update.effective_user or not update.message:
+        logger.warning("Received a text message without a valid update or user.")
         return
-
+    
+    user_id = update.effective_user.id
     text = (update.message.text or "").strip()
 
     stage = context.user_data.get("stage")
