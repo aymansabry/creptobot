@@ -1,6 +1,6 @@
 # db.py
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, BigInteger
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,16 +15,18 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(Integer, unique=True, index=True)
-    api_key = Column(String)
-    api_secret = Column(String)
+    # تم تغيير نوع البيانات من Integer إلى BigInteger
+    telegram_id = Column(BigInteger, unique=True, index=True)
+    # تم إضافة طول للعمود String ليتوافق مع MySQL
+    api_key = Column(String(255))
+    api_secret = Column(String(255))
     trading_amount = Column(Float, default=5.0)
 
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer)
-    pair = Column(String)
+    pair = Column(String(255))
     profit = Column(Float)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
