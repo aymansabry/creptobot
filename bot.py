@@ -15,7 +15,6 @@ from telegram.ext import (
 from db import create_user, save_api_keys, get_user_api_keys, save_amount, get_amount, get_last_trades, create_tables
 from trading import start_arbitrage, stop_arbitrage, get_client_for_user
 from ai_strategy import AIStrategy
-from datetime import datetime
 
 # Logging setup
 logging.basicConfig(
@@ -35,7 +34,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await create_user(user.id)
     await update.message.reply_text(
-        "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help.\n\n⚠️ ملاحظة: تأكد من أن متغيرات البيئة مضبوطة بشكل صحيح وأنك قمت بإنشاء الجداول في قاعدة البيانات."
+        "✅ تم التسجيل بنجاح.\nللحصول على قائمة الأوامر، اكتب /help."
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,10 +183,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("📌 استخدم قائمة الأوامر أو اكتب /help.")
 
-# ====== Main runner ======
 def main():
     if not BOT_TOKEN:
         raise ValueError("⚠️ لم يتم العثور على TELEGRAM_BOT_TOKEN في المتغيرات البيئية")
+
+    # This creates tables asynchronously before starting the bot
+    asyncio.run(create_tables())
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -203,9 +204,6 @@ def main():
     # Add handler for text messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
-    # Run the table creation one time
-    asyncio.run(create_tables())
-
     logger.info("🤖 البوت يعمل الآن...")
     app.run_polling(poll_interval=1.0)
 
