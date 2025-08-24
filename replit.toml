@@ -1,0 +1,3 @@
+[tools]
+[tools.bash]
+run = "python3 run.py"
