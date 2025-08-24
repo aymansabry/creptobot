@@ -132,40 +132,58 @@ def db_session():
         db.close()
 
 def upgrade_database():
-    """Checks for database tables and creates them if they don't exist."""
+    """
+    Checks for database tables and their columns, and creates them if they don't exist.
+    This function is more robust and will handle cases where tables or columns are missing.
+    """
     try:
         inspector = sa_inspect(engine)
-        if not inspector.has_table("users"):
+        
+        # Check if main tables exist, if not, create all of them.
+        tables_to_create = [
+            User, ExchangeCredential, Trade, RejectedTrade, MarketData
+        ]
+        
+        all_tables_exist = all(inspector.has_table(table.__tablename__) for table in tables_to_create)
+
+        if not all_tables_exist:
             Base.metadata.create_all(engine)
             logger.info("Tables created successfully.")
             return
 
+        # If tables exist, check for missing columns and add them.
         with engine.connect() as conn:
-            cols = [c['name'] for c in inspector.get_columns('users')]
-            if 'base_investment' not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN base_investment FLOAT DEFAULT 0.0"))
-                logger.info("Added 'base_investment' column to 'users' table.")
-            if 'investment_status' not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN investment_status VARCHAR(20) DEFAULT 'stopped'"))
-                logger.info("Added 'investment_status' column to 'users' table.")
-            if 'daily_profit' not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN daily_profit FLOAT DEFAULT 0.0"))
-                logger.info("Added 'daily_profit' column to 'users' table.")
-            if 'total_profit' not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN total_profit FLOAT DEFAULT 0.0"))
-                logger.info("Added 'total_profit' column to 'users' table.")
-            if 'trading_mode' not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN trading_mode VARCHAR(20) DEFAULT 'triangular'"))
-                logger.info("Added 'trading_mode' column to 'users' table.")
-            if 'risk_level' not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN risk_level VARCHAR(20) DEFAULT 'medium'"))
-                logger.info("Added 'risk_level' column to 'users' table.")
+            user_cols = [c['name'] for c in inspector.get_columns('users')]
+            
+            # Columns to check for and add
+            columns_to_add = {
+                'base_investment': "FLOAT DEFAULT 0.0",
+                'investment_status': "VARCHAR(20) DEFAULT 'stopped'",
+                'last_activity': "DATETIME",
+                'daily_profit': "FLOAT DEFAULT 0.0",
+                'total_profit': "FLOAT DEFAULT 0.0",
+                'trading_mode': "VARCHAR(20) DEFAULT 'triangular'",
+                'risk_level': "VARCHAR(20) DEFAULT 'medium'"
+            }
+            
+            for col_name, col_type in columns_to_add.items():
+                if col_name not in user_cols:
+                    try:
+                        conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                        logger.info(f"Added '{col_name}' column to 'users' table.")
+                    except Exception as e:
+                        logger.error(f"Failed to add column {col_name}: {e}")
+                        raise
+
+            conn.commit()
+
             if not inspector.has_table("market_data"):
                 MarketData.__table__.create(engine)
                 logger.info("Created 'market_data' table.")
-            conn.commit()
+
     except Exception as e:
         logger.error(f"Error during database upgrade: {e}")
+        raise
 
 # -----------------
 # Trading Logic & Utilities
@@ -453,39 +471,48 @@ class InvestmentStates(StatesGroup):
 
 # --- Keyboards ---
 def main_menu_keyboard():
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("🔐 إدارة المنصات", callback_data="menu_exchanges"),
-        types.InlineKeyboardButton("💰 تعيين المبلغ", callback_data="menu_investment")
-    )
-    kb.add(
-        types.InlineKeyboardButton("⚙️ الإعدادات", callback_data="menu_settings"),
-        types.InlineKeyboardButton("📊 كشف الحساب", callback_data="menu_report")
-    )
-    kb.add(
-        types.InlineKeyboardButton("🚀 بدء التداول", callback_data="menu_start_trading"),
-        types.InlineKeyboardButton("🛑 إيقاف البوت", callback_data="menu_stop_bot")
-    )
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="🔐 إدارة المنصات", callback_data="menu_exchanges"),
+            types.InlineKeyboardButton(text="💰 تعيين المبلغ", callback_data="menu_investment")
+        ],
+        [
+            types.InlineKeyboardButton(text="⚙️ الإعدادات", callback_data="menu_settings"),
+            types.InlineKeyboardButton(text="📊 كشف الحساب", callback_data="menu_report")
+        ],
+        [
+            types.InlineKeyboardButton(text="🚀 بدء التداول", callback_data="menu_start_trading"),
+            types.InlineKeyboardButton(text="🛑 إيقاف البوت", callback_data="menu_stop_bot")
+        ]
+    ])
     return kb
 
 def back_keyboard():
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="🔙 العودة", callback_data="back_main")]
+    ])
     return kb
 
 def settings_keyboard():
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("🔺 مثلثي", callback_data="setting_mode_triangular"),
-        types.InlineKeyboardButton("🔷 رباعي", callback_data="setting_mode_quad"),
-        types.InlineKeyboardButton("🔶 خماسي", callback_data="setting_mode_penta")
-    )
-    kb.add(
-        types.InlineKeyboardButton("🟢 منخفض", callback_data="setting_risk_low"),
-        types.InlineKeyboardButton("🟡 متوسط", callback_data="setting_risk_medium"),
-        types.InlineKeyboardButton("🔴 عالي", callback_data="setting_risk_high")
-    )
-    kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="🔺 مثلثي", callback_data="setting_mode_triangular"),
+            types.InlineKeyboardButton(text="🔷 رباعي", callback_data="setting_mode_quad"),
+        ],
+        [
+            types.InlineKeyboardButton(text="🔶 خماسي", callback_data="setting_mode_penta")
+        ],
+        [
+            types.InlineKeyboardButton(text="🟢 منخفض", callback_data="setting_risk_low"),
+            types.InlineKeyboardButton(text="🟡 متوسط", callback_data="setting_risk_medium"),
+        ],
+        [
+            types.InlineKeyboardButton(text="🔴 عالي", callback_data="setting_risk_high")
+        ],
+        [
+            types.InlineKeyboardButton(text="🔙 العودة", callback_data="back_main")
+        ]
+    ])
     return kb
 
 # --- Actual Handlers ---
@@ -513,9 +540,10 @@ async def back_main(callback_query: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "menu_exchanges")
 async def menu_exchanges(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("Binance", callback_data="exchange_binance"))
-    kb.add(types.InlineKeyboardButton("🔙 العودة", callback_data="back_main"))
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="Binance", callback_data="exchange_binance")],
+        [types.InlineKeyboardButton(text="🔙 العودة", callback_data="back_main")]
+    ])
     await callback_query.message.edit_text("💹 اختر المنصة:", reply_markup=kb)
     await state.set_state(ExchangeStates.choosing_exchange)
 
@@ -623,11 +651,12 @@ async def menu_report(callback_query: types.CallbackQuery):
     await callback_query.answer()
     with db_session() as db:
         user = db.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
-        report = f"📊 <b>كشف الحساب</b>\n"
-        report += f"• إجمالي الربح: {user.total_profit:.6f} USDT\n"
-        report += f"• ربح اليوم: {user.daily_profit:.6f} USDT\n"
-        report += f"• آخر استثمار: {user.base_investment:.2f} USDT\n"
-    await callback_query.message.edit_text(report, reply_markup=main_menu_keyboard())
+        if user:
+            report = f"📊 <b>كشف الحساب</b>\n"
+            report += f"• إجمالي الربح: {user.total_profit:.6f} USDT\n"
+            report += f"• ربح اليوم: {user.daily_profit:.6f} USDT\n"
+            report += f"• آخر استثمار: {user.base_investment:.2f} USDT\n"
+            await callback_query.message.edit_text(report, reply_markup=main_menu_keyboard())
 
 # -----------------
 # Main Function
