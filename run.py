@@ -1,676 +1,487 @@
-# run.py
+# main.py
+# This is a single, self-contained file for the trading bot, compatible with Replit.
+# It includes the bot logic, trading logic, and a simple in-memory database.
+
 import os
-import logging
 import asyncio
-import decimal
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple, Set, Any, Union
-from contextlib import contextmanager
+import logging
+from typing import List, Dict, Any, Tuple, Optional
+import math
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from flask import Flask
+from threading import Thread
+from binance import AsyncClient
+from binance.enums import ORDER_TYPE_MARKET, SIDE_BUY, SIDE_SELL
 
-# -----------------
-# Importing essential libraries
-# -----------------
-import ccxt
-from sqlalchemy import (
-    create_engine, Column, Integer, String, Float,
-    DateTime, Boolean, BigInteger, ForeignKey, text, inspect as sa_inspect
-)
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-
-from aiogram import Bot, Dispatcher, types
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramAPIError
-from aiogram.client.default import DefaultBotProperties
-from aiogram import Router
-from aiogram import F
-from aiogram.filters import CommandStart, Command, StateFilter
-
-# -----------------
-# Core Bot & Logging Setup
-# -----------------
-# Set BOT_TOKEN as an environment variable
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN must be set as an environment variable.")
-
+# ----------------- إعدادات التسجيل (Logging) -----------------
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TradingBot")
 
-# -----------------
-# Database Models & Setup
-# -----------------
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///arbitrage.db")
-Base = declarative_base()
+# ----------------- قاعدة بيانات بسيطة (في الذاكرة) -----------------
+# Mock database (in-memory dictionary)
+# In a real app, this data would be stored in Supabase/Firestore
+USER_DATA = {}  # {telegram_id: {'api_key': '...', 'api_secret': '...', 'amount': '...'}}
+TRADING_RUNNING = {}  # A flag for each user to indicate if the trading loop is active
+USER_CLIENTS = {}  # A cache for Binance clients for each user
+EXCHANGE_INFO_CACHE = {}  # A cache for exchange information
 
-class User(Base):
-    """Database table for users."""
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, index=True)
-    base_investment = Column(Float, default=0.0)
-    investment_status = Column(String(20), default="stopped")
-    last_activity = Column(DateTime, default=datetime.utcnow)
-    daily_profit = Column(Float, default=0.0)
-    total_profit = Column(Float, default=0.0)
-    trading_mode = Column(String(20), default="triangular")
-    risk_level = Column(String(20), default="medium")
-    exchanges = relationship("ExchangeCredential", back_populates="user", cascade="all, delete-orphan")
+def save_user_api_keys(telegram_id: int, api_key: str, api_secret: str):
+    """Saves user API keys to the database."""
+    if telegram_id not in USER_DATA:
+        USER_DATA[telegram_id] = {}
+    USER_DATA[telegram_id]['api_key'] = api_key
+    USER_DATA[telegram_id]['api_secret'] = api_secret
+    logger.info(f"API keys saved for user {telegram_id}.")
 
-class ExchangeCredential(Base):
-    """Database table for user's exchange credentials."""
-    __tablename__ = "exchange_credentials"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    exchange_id = Column(String(50))
-    api_key = Column(String(512))
-    secret = Column(String(512))
-    password = Column(String(512), nullable=True)
-    user = relationship("User", back_populates="exchanges")
+def get_user_api_keys(telegram_id: int) -> Tuple[Optional[str], Optional[str]]:
+    """Retrieves user API keys from the database."""
+    data = USER_DATA.get(telegram_id, {})
+    return data.get('api_key'), data.get('api_secret')
 
-class Trade(Base):
-    """Database table for successful trades."""
-    __tablename__ = "trades"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    pair = Column(String(100))
-    side = Column(String(50))
-    amount = Column(Float)
-    price = Column(Float)
-    fee = Column(Float)
-    profit = Column(Float)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    details = Column(String(500))
-    status = Column(String(20), default="completed")
-    rejection_reason = Column(String(200))
-    trade_type = Column(String(20), default="triangular")
-    user = relationship("User", backref="trades")
+def save_amount(telegram_id: int, amount: float):
+    """Saves the trading amount for a user."""
+    if telegram_id not in USER_DATA:
+        USER_DATA[telegram_id] = {}
+    USER_DATA[telegram_id]['amount'] = amount
+    logger.info(f"Amount {amount} saved for user {telegram_id}.")
 
-class RejectedTrade(Base):
-    """Database table for rejected or failed trades."""
-    __tablename__ = "rejected_trades"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    path = Column(String(300))
-    expected_profit = Column(Float)
-    rejection_reason = Column(String(200))
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    details = Column(String(500))
-    trade_type = Column(String(20), default="triangular")
-    user = relationship("User", backref="rejected_trades")
+def get_amount(telegram_id: int) -> float:
+    """Retrieves the trading amount for a user."""
+    data = USER_DATA.get(telegram_id, {})
+    return data.get('amount', 10.0)  # Default to 10 USDT if not set
 
-class MarketData(Base):
-    """Table for storing market data to reduce API calls."""
-    __tablename__ = "market_data"
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(50), unique=True, index=True)
-    min_amount = Column(Float, default=0.0)
-    min_cost = Column(Float, default=0.0)
-    price_precision = Column(Integer, default=8)
-    amount_precision = Column(Integer, default=8)
-    last_updated = Column(DateTime, default=datetime.utcnow)
+def add_trade(telegram_id: int, path: str, profit: float):
+    """Logs a successful trade."""
+    logger.info(f"User {telegram_id} completed a trade. Path: {path}, Profit: {profit}")
+    # In a real app, you would save this to a 'trades' table in your database.
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
-SessionLocal = sessionmaker(bind=engine)
+# ----------------- وظائف التداول (Trading Logic) -----------------
 
-@contextmanager
-def db_session():
-    """Provides a transactional scope around a series of operations."""
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+async def get_client_for_user(telegram_id: int) -> AsyncClient:
+    """Creates or returns a cached AsyncClient for a user."""
+    if telegram_id in USER_CLIENTS:
+        return USER_CLIENTS[telegram_id]
 
-def upgrade_database():
-    """
-    Checks for database tables and their columns, and creates them if they don't exist.
-    This function is more robust and will handle cases where tables or columns are missing.
-    """
-    try:
-        inspector = sa_inspect(engine)
-        
-        # Check if main tables exist, if not, create all of them.
-        tables_to_create = [
-            User, ExchangeCredential, Trade, RejectedTrade, MarketData
-        ]
-        
-        all_tables_exist = all(inspector.has_table(table.__tablename__) for table in tables_to_create)
+    api_key, api_secret = get_user_api_keys(telegram_id)
+    if not api_key or not api_secret:
+        raise ValueError("API keys not found for user.")
+    
+    client = await AsyncClient.create(api_key, api_secret)
+    USER_CLIENTS[telegram_id] = client
+    return client
 
-        if not all_tables_exist:
-            Base.metadata.create_all(engine)
-            logger.info("Tables created successfully.")
-            return
-
-        # If tables exist, check for missing columns and add them.
-        with engine.connect() as conn:
-            user_cols = [c['name'] for c in inspector.get_columns('users')]
-            
-            # Columns to check for and add
-            columns_to_add = {
-                'base_investment': "FLOAT DEFAULT 0.0",
-                'investment_status': "VARCHAR(20) DEFAULT 'stopped'",
-                'last_activity': "DATETIME",
-                'daily_profit': "FLOAT DEFAULT 0.0",
-                'total_profit': "FLOAT DEFAULT 0.0",
-                'trading_mode': "VARCHAR(20) DEFAULT 'triangular'",
-                'risk_level': "VARCHAR(20) DEFAULT 'medium'"
-            }
-            
-            for col_name, col_type in columns_to_add.items():
-                if col_name not in user_cols:
-                    try:
-                        conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
-                        logger.info(f"Added '{col_name}' column to 'users' table.")
-                    except Exception as e:
-                        logger.error(f"Failed to add column {col_name}: {e}")
-                        raise
-
-            conn.commit()
-
-            if not inspector.has_table("market_data"):
-                MarketData.__table__.create(engine)
-                logger.info("Created 'market_data' table.")
-
-    except Exception as e:
-        logger.error(f"Error during database upgrade: {e}")
-        raise
-
-# -----------------
-# Trading Logic & Utilities
-# -----------------
-# Trading constants
-MIN_PROFIT_PERCENT = 0.05
-REQUEST_DELAY = 0.3
-ARBITRAGE_CYCLE = 45 # Seconds
-
-# Supported arbitrage paths
-TRIANGULAR_PATHS = [
-    ("TRX/USDT", "TRX/BNB", "BNB/USDT"),
-    ("WIN/USDT", "WIN/BNB", "BNB/USDT"),
-    ("HOT/USDT", "HOT/BNB", "BNB/USDT"),
-    ("SHIB/USDT", "SHIB/BNB", "BNB/USDT"),
-    ("DOGE/USDT", "DOGE/BNB", "BNB/USDT"),
-]
-QUAD_PATHS = [
-    ("TRX/USDT", "TRX/BNB", "BNB/BTC", "BTC/USDT"),
-    ("XRP/USDT", "XRP/BNB", "BNB/ETH", "ETH/USDT"),
-]
-PENTA_PATHS = [
-    ("TRX/USDT", "TRX/BNB", "BNB/BTC", "BTC/ETH", "ETH/USDT"),
-]
-
-class RetryManager:
-    """Manages retries for failed API requests."""
-    def __init__(self, max_attempts=3, base_delay=1, max_delay=30):
-        self.max_attempts = max_attempts
-        self.base_delay = base_delay
-        self.max_delay = max_delay
-
-    async def execute_with_retry(self, func, *args, **kwargs):
-        last_exception = None
-        for attempt in range(self.max_attempts):
-            try:
-                if asyncio.iscoroutinefunction(func):
-                    result = await func(*args, **kwargs)
-                else:
-                    result = await asyncio.to_thread(func, *args, **kwargs)
-                return result
-            except (ccxt.NetworkError, ccxt.ExchangeError, asyncio.TimeoutError) as e:
-                last_exception = e
-                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
-                logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay} seconds: {str(e)}")
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logger.error(f"Unexpected error in execute_with_retry: {str(e)}")
-                raise e
-        raise last_exception if last_exception else Exception("Failed after all attempts")
-
-class MarketCache:
-    """Caches market data to reduce API calls."""
-    def __init__(self, ttl_minutes=30):
-        self.cache = {}
-        self.ttl = timedelta(minutes=ttl_minutes)
-
-    async def get_markets(self, exchange, force_reload=False):
-        exchange_id = exchange.id
-        now = datetime.now()
-        if force_reload or exchange_id not in self.cache or now - self.cache[exchange_id]['timestamp'] > self.ttl:
-            try:
-                markets = await asyncio.to_thread(exchange.load_markets)
-                self.cache[exchange_id] = {'markets': markets, 'timestamp': now}
-                logger.info(f"Loaded {len(markets)} markets for {exchange_id}")
-                with db_session() as db:
-                    for symbol, market in markets.items():
-                        market_data = db.query(MarketData).filter_by(symbol=symbol).first() or MarketData(symbol=symbol)
-                        limits = market.get('limits', {})
-                        min_amount = limits.get('amount', {}).get('min')
-                        min_cost = limits.get('cost', {}).get('min')
-                        market_data.min_amount = float(min_amount) if min_amount is not None else 0.0
-                        market_data.min_cost = float(min_cost) if min_cost is not None else 0.0
-                        precision = market.get('precision', {})
-                        market_data.price_precision = precision.get('price', 8)
-                        market_data.amount_precision = precision.get('amount', 8)
-                        market_data.last_updated = now
-                        db.add(market_data)
-            except Exception as e:
-                if exchange_id in self.cache:
-                    logger.warning(f"Using cached market data due to error: {str(e)}")
-                    return self.cache[exchange_id]['markets']
-                raise e
-        return self.cache[exchange_id]['markets']
-
-retry_manager = RetryManager()
-market_cache = MarketCache()
-
-async def get_exchange(user_id: int) -> Optional[ccxt.Exchange]:
-    """Creates a ccxt object for the specified exchange."""
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=user_id).first()
-        if not user or not user.exchanges:
-            return None
-        cred = user.exchanges[0]
-        exchange_id = cred.exchange_id.lower()
-        if not hasattr(ccxt, exchange_id):
-            return None
-        exchange_class = getattr(ccxt, exchange_id)
-        exchange = exchange_class({
-            'apiKey': cred.api_key,
-            'secret': cred.secret,
-            'password': cred.password,
-            'enableRateLimit': True,
-            'options': {'defaultType': 'spot'}
-        })
+async def close_clients():
+    """Closes all cached client connections."""
+    for c in list(USER_CLIENTS.values()):
         try:
-            await market_cache.get_markets(exchange)
-            return exchange
-        except Exception as e:
-            logger.error(f"Failed to load markets: {str(e)}")
-            return None
+            await c.close_connection()
+        except Exception:
+            pass
+    USER_CLIENTS.clear()
 
-async def check_balance(exchange, currency: str = 'USDT') -> float:
-    """Checks the balance of a specific currency."""
-    try:
-        balance = await retry_manager.execute_with_retry(exchange.fetch_free_balance)
-        return float(balance.get(currency, 0.0))
-    except Exception as e:
-        logger.error(f"Error fetching balance: {str(e)}")
+async def get_exchange_info(client: AsyncClient, symbol: str) -> Dict[str, Any]:
+    """Fetches exchange information for a given symbol with caching."""
+    if symbol in EXCHANGE_INFO_CACHE:
+        return EXCHANGE_INFO_CACHE[symbol]
+    info = await client.get_symbol_info(symbol=symbol)
+    if info:
+        EXCHANGE_INFO_CACHE[symbol] = info
+    return info
+
+def get_symbol_step_size(info: Dict[str, Any]) -> float:
+    """Extracts the stepSize from symbol info."""
+    for f in info['filters']:
+        if f['filterType'] == 'LOT_SIZE':
+            return float(f['stepSize'])
+    return 0.0
+
+def get_symbol_min_notional(info: Dict[str, Any]) -> float:
+    """Extracts the minNotional from symbol info."""
+    for f in info['filters']:
+        if f['filterType'] == 'MIN_NOTIONAL':
+            return float(f['minNotional'])
+    return 0.0
+
+def floor_quantity_to_step_size(quantity: float, step_size: float) -> float:
+    """Rounds down the quantity to fit the step size."""
+    if step_size == 0:
         return 0.0
+    return math.floor(quantity / step_size) * step_size
 
-async def check_arbitrage_path(exchange, path: Tuple[str, ...], quote_amount: float) -> Optional[float]:
-    """Analyzes an arbitrage path and calculates the potential profit."""
+async def check_user_balance(client: AsyncClient, trading_amount: float) -> bool:
+    """Checks if the user has sufficient USDT balance."""
     try:
-        current_prices = {}
-        for symbol in path:
-            ticker = await retry_manager.execute_with_retry(exchange.fetch_ticker, symbol)
-            if not ticker or 'last' not in ticker or ticker['last'] is None:
-                return None
-            current_prices[symbol] = float(ticker['last'])
-
-        amt = decimal.Decimal(str(quote_amount))
-        for symbol in path:
-            # Simplified logic for demonstration
-            price = decimal.Decimal(str(current_prices[symbol]))
-            if '/USDT' in symbol:
-                amt = (amt / price) * (decimal.Decimal('1') - decimal.Decimal(str(exchange.markets[symbol]['taker'])))
-            else:
-                amt = (amt * price) * (decimal.Decimal('1') - decimal.Decimal(str(exchange.markets[symbol]['taker'])))
-
-        final_amount = float(amt)
-        net_profit = final_amount - quote_amount
-        return net_profit if net_profit > 0 else None
+        info = await client.get_account()
+        usdt_balance = 0.0
+        for asset in info['balances']:
+            if asset['asset'] == 'USDT':
+                usdt_balance = float(asset['free'])
+                break
+        return usdt_balance >= trading_amount
     except Exception as e:
-        logger.error(f"Error analyzing path {path}: {str(e)}")
-        return None
-
-async def execute_arbitrage(user_id: int, path: Tuple[str, ...], quote_amount: float, bot_instance) -> bool:
-    """Executes the arbitrage trade on the exchange."""
-    exchange = await get_exchange(user_id)
-    if not exchange: return False
-    
-    current_amount = quote_amount
-    trade_summary = []
-    
-    try:
-        trade_summary.append(f"🔄 Starting arbitrage trade on path: {' → '.join(path)}")
-
-        for i, symbol in enumerate(path):
-            await asyncio.sleep(REQUEST_DELAY)
-            
-            # This is a simplified example. Real-world logic needs to be more robust.
-            if i == 0:
-                price = float((await retry_manager.execute_with_retry(exchange.fetch_ticker, symbol))['ask'])
-                amount_to_buy = current_amount / price
-                order = await retry_manager.execute_with_retry(exchange.create_market_buy_order, symbol, amount_to_buy)
-            else:
-                order = await retry_manager.execute_with_retry(exchange.create_market_sell_order, symbol, current_amount)
-
-            if not order or order.get('status') != 'closed':
-                raise Exception(f"Trade failed at {symbol}")
-            
-            filled_amount = float(order.get('filled', 0))
-            if filled_amount <= 0:
-                raise Exception(f"Order filled 0 at {symbol}")
-
-            current_amount = float(order.get('cost', 0))
-            trade_summary.append(f"✅ Executed: {'sell' if i > 0 else 'buy'} {symbol} with amount {filled_amount:.6f}")
-
-        profit = current_amount - quote_amount
-        trade_summary.append(f"🎉 Success! Profit: {profit:.6f} USDT")
-        
-        with db_session() as db:
-            user = db.query(User).filter_by(telegram_id=user_id).first()
-            if user:
-                user.total_profit += profit
-                db.add(Trade(user_id=user.id, pair="->".join(path), amount=quote_amount, profit=profit, details=" | ".join(trade_summary)))
-        
-        await bot_instance.send_message(user_id, "\n".join(trade_summary))
-        return True
-
-    except Exception as e:
-        await bot_instance.send_message(user_id, f"❌ An error occurred during trade execution: {str(e)}")
+        logger.error(f"Error checking balance: {e}")
         return False
 
-# -----------------
-# Main Trading Loop
-# -----------------
-async def enhanced_trading_cycle(user_id: int, bot_instance):
-    """The main trading loop that runs continuously."""
+async def start_arbitrage(telegram_id: int):
+    """Starts the long-running arbitrage loop for a specific user."""
+    TRADING_RUNNING[telegram_id] = True
     try:
-        while True: # Loop indefinitely until user stops it
-            with db_session() as db:
-                user = db.query(User).filter_by(telegram_id=user_id).first()
-                if not user or user.investment_status != "running":
-                    logger.info(f"Stopping trading cycle for user {user_id}.")
-                    break # Exit the loop
-                
-                exchange = await get_exchange(user.telegram_id)
-                if not exchange:
-                    await bot_instance.send_message(user.telegram_id, "❌ Failed to connect to the exchange. Stopping trading.")
-                    user.investment_status = "stopped"
-                    break
-                
-                invest_amt = float(user.base_investment or 0.0)
-                if invest_amt < 5.0:
-                    await bot_instance.send_message(user.telegram_id, "❌ Please set an investment amount (min 5 USDT). Stopping trading.")
-                    user.investment_status = "stopped"
-                    break
-                
-                supported_paths = []
-                if user.trading_mode == "triangular":
-                    supported_paths = TRIANGULAR_PATHS
-                elif user.trading_mode == "quad":
-                    supported_paths = QUAD_PATHS
-                elif user.trading_mode == "penta":
-                    supported_paths = PENTA_PATHS
-
-                if not supported_paths:
-                    await bot_instance.send_message(user.telegram_id, "🔍 No supported paths found for this trading mode. Stopping trading.")
-                    user.investment_status = "stopped"
-                    break
-
-                best_opportunity = None
-                best_profit = -1
-
-                for path in supported_paths:
-                    profit = await check_arbitrage_path(exchange, path, invest_amt)
-                    if profit is not None and profit > best_profit:
-                        best_profit = profit
-                        best_opportunity = path
-
-                if best_opportunity:
-                    profit_percent = (best_profit / invest_amt) * 100
-                    await bot_instance.send_message(
-                        user.telegram_id,
-                        f"📈 Profitable opportunity found: {' → '.join(best_opportunity)}\n"
-                        f"Expected Profit: {best_profit:.6f} USDT ({profit_percent:.2f}%)"
-                    )
-                    await execute_arbitrage(user.telegram_id, best_opportunity, invest_amt, bot_instance)
-                else:
-                    await bot_instance.send_message(user.telegram_id, "🔍 No profitable opportunities found at the moment.")
-
-            await asyncio.sleep(ARBITRAGE_CYCLE)
-
-    except TelegramAPIError:
-        logger.warning(f"Bot was blocked by user {user_id}. Stopping cycle.")
-        with db_session() as db:
-            user = db.query(User).filter_by(telegram_id=user_id).first()
-            if user: user.investment_status = "stopped"
+        client = await get_client_for_user(telegram_id)
+        trading_amount_usdt = get_amount(telegram_id)
+        
+        if not await check_user_balance(client, trading_amount_usdt):
+            logger.error(f"Cannot start arbitrage for {telegram_id}: Insufficient balance.")
+            TRADING_RUNNING.pop(telegram_id, None)
+            return
+            
     except Exception as e:
-        logger.error(f"An error occurred in the trading cycle: {str(e)}")
-        await bot_instance.send_message(user_id, f"❌ A critical error occurred in the trading cycle: {str(e)}. Stopping bot.")
-        with db_session() as db:
-            user = db.query(User).filter_by(telegram_id=user_id).first()
-            if user: user.investment_status = "stopped"
-    finally:
-        # Final cleanup or notification
-        logger.info(f"Trading cycle for user {user_id} has concluded.")
+        logger.error(f"Cannot start arbitrage for {telegram_id}: {e}")
+        TRADING_RUNNING.pop(telegram_id, None)
+        return
 
-# -----------------
-# Bot Handlers & FSM
-# -----------------
-router = Router()
+    logger.info(f"Starting arbitrage loop for {telegram_id} with {trading_amount_usdt} USDT.")
 
-class ExchangeStates(StatesGroup):
-    choosing_exchange = State()
-    entering_api_key = State()
-    entering_secret = State()
-    entering_password = State()
+    while TRADING_RUNNING.get(telegram_id):
+        try:
+            opportunities = await calculate_arbitrage_opportunities(client)
+            for opp in opportunities:
+                ok = await execute_arbitrage(client, telegram_id, opp, trading_amount_usdt)
+                if ok:
+                    logger.info("Executed arbitrage successfully")
+                else:
+                    logger.info("Arbitrage attempt failed")
+                break 
+            
+            await asyncio.sleep(3)
+        except Exception as e:
+            logger.exception("Error in arbitrage loop: %s", e)
+            await asyncio.sleep(2)
 
-class InvestmentStates(StatesGroup):
-    entering_amount = State()
+    logger.info(f"Arbitrage loop stopped for {telegram_id}")
 
-# --- Keyboards ---
-def main_menu_keyboard():
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="🔐 إدارة المنصات", callback_data="menu_exchanges"),
-            types.InlineKeyboardButton(text="💰 تعيين المبلغ", callback_data="menu_investment")
-        ],
-        [
-            types.InlineKeyboardButton(text="⚙️ الإعدادات", callback_data="menu_settings"),
-            types.InlineKeyboardButton(text="📊 كشف الحساب", callback_data="menu_report")
-        ],
-        [
-            types.InlineKeyboardButton(text="🚀 بدء التداول", callback_data="menu_start_trading"),
-            types.InlineKeyboardButton(text="🛑 إيقاف البوت", callback_data="menu_stop_bot")
-        ]
-    ])
-    return kb
+async def stop_arbitrage(telegram_id: int = None):
+    """Stops trading for a specific user or all users if telegram_id is None."""
+    if telegram_id is None:
+        for k in list(TRADING_RUNNING.keys()):
+            TRADING_RUNNING[k] = False
+        await close_clients()
+        logger.info("Stopped all arbitrage loops")
+    else:
+        TRADING_RUNNING[telegram_id] = False
+        client = USER_CLIENTS.pop(telegram_id, None)
+        if client:
+            try:
+                await client.close_connection()
+            except Exception:
+                pass
+        logger.info(f"Stopped arbitrage for {telegram_id}")
 
-def back_keyboard():
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🔙 العودة", callback_data="back_main")]
-    ])
-    return kb
+async def place_market_order(client: AsyncClient, symbol: str, side: str, quantity: float):
+    """Places a market order, ensuring the quantity fits exchange rules."""
+    try:
+        order = await client.create_order(
+            symbol=symbol,
+            side=side,
+            type=ORDER_TYPE_MARKET,
+            quantity=quantity
+        )
+        logger.info(f"Order placed: {order}")
+        return order
+    except Exception as e:
+        logger.error(f"place_market_order error {symbol} {side} {quantity}: {e}")
+        return None
 
-def settings_keyboard():
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="🔺 مثلثي", callback_data="setting_mode_triangular"),
-            types.InlineKeyboardButton(text="🔷 رباعي", callback_data="setting_mode_quad"),
-        ],
-        [
-            types.InlineKeyboardButton(text="🔶 خماسي", callback_data="setting_mode_penta")
-        ],
-        [
-            types.InlineKeyboardButton(text="🟢 منخفض", callback_data="setting_risk_low"),
-            types.InlineKeyboardButton(text="🟡 متوسط", callback_data="setting_risk_medium"),
-        ],
-        [
-            types.InlineKeyboardButton(text="🔴 عالي", callback_data="setting_risk_high")
-        ],
-        [
-            types.InlineKeyboardButton(text="🔙 العودة", callback_data="back_main")
-        ]
-    ])
-    return kb
+async def get_price(client: AsyncClient, symbol: str) -> float:
+    """Fetches the current price of a symbol."""
+    try:
+        ticker = await client.get_symbol_ticker(symbol=symbol)
+        return float(ticker["price"])
+    except Exception:
+        return 0.0
 
-# --- Actual Handlers ---
-@router.message(CommandStart())
-async def cmd_start(message: types.Message):
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if not user:
-            user = User(telegram_id=message.from_user.id)
-            db.add(user)
-    await message.answer(
-        "🤖 <b>مرحباً بك في بوت المراجحة الذكية</b>\n\n"
-        "• إدارة تلقائية لرصيد BNB\n"
-        "• إعادة استثمار الأرباح تلقائياً\n\n"
-        "🚀 ابدأ بإضافة منصة Binance ثم تعيين مبلغ الاستثمار",
-        reply_markup=main_menu_keyboard()
+async def calculate_arbitrage_opportunities(client: AsyncClient) -> List[Dict[str, Any]]:
+    """
+    Detects triangular, quadrilateral, and pentagonal arbitrage opportunities.
+    Returns a list of opportunities sorted by estimated profit.
+    """
+    tickers = await client.get_all_tickers()
+    symbols = [t["symbol"] for t in tickers]
+    price_map = {t["symbol"]: float(t["price"]) for t in tickers}
+
+    opportunities = []
+    TRADING_FEE = 0.001
+
+    def has(sym):
+        return sym in price_map
+
+    # --- Triangular Arbitrage: A/USDT -> A/B -> B/USDT ---
+    for s_a_usdt in [s for s in symbols if s.endswith("USDT")]:
+        coin_a = s_a_usdt[:-4]
+        for s_a_b in [s for s in symbols if s.startswith(coin_a) and s != s_a_usdt]:
+            coin_b = s_a_b[len(coin_a):]
+            final = f"{coin_b}USDT"
+            if not has(final):
+                continue
+            
+            pa = price_map[s_a_usdt]
+            pab = price_map[s_a_b]
+            pfinal = price_map[final]
+            try:
+                final_usdt = (1.0 * (1 - TRADING_FEE) / pa) * pab * (1 - TRADING_FEE) * pfinal * (1 - TRADING_FEE)
+                est_profit = final_usdt - 1.0
+                if est_profit > 0.0001:
+                    opp = {
+                        "type": "tri",
+                        "path": [s_a_usdt, s_a_b, final],
+                        "est_profit_ratio": est_profit,
+                    }
+                    opportunities.append(opp)
+            except Exception:
+                continue
+
+    # --- Quadrilateral Arbitrage: A/USDT -> A/B -> B/C -> C/USDT ---
+    for s_a_usdt in [s for s in symbols if s.endswith("USDT")]:
+        coin_a = s_a_usdt[:-4]
+        for s_a_b in [s for s in symbols if s.startswith(coin_a) and s != s_a_usdt]:
+            coin_b = s_a_b[len(coin_a):]
+            for s_b_c in [s for s in symbols if s.startswith(coin_b) and s not in (s_a_b, s_a_usdt)]:
+                coin_c = s_b_c[len(coin_b):]
+                final = f"{coin_c}USDT"
+                if not has(final):
+                    continue
+                try:
+                    pa = price_map[s_a_usdt]
+                    pab = price_map[s_a_b]
+                    pbc = price_map[s_b_c]
+                    pfinal = price_map[final]
+                    final_usdt = (1.0 * (1 - TRADING_FEE) / pa) * pab * (1 - TRADING_FEE) * pbc * (1 - TRADING_FEE) * pfinal * (1 - TRADING_FEE)
+                    est_profit = final_usdt - 1.0
+                    if est_profit > 0.00015:
+                        opp = {
+                            "type": "quad",
+                            "path": [s_a_usdt, s_a_b, s_b_c, final],
+                            "est_profit_ratio": est_profit,
+                        }
+                        opportunities.append(opp)
+                except Exception:
+                    continue
+                    
+    # --- Pentagonal Arbitrage (5 steps) ---
+    for s_a_usdt in [s for s in symbols if s.endswith("USDT")]:
+        coin_a = s_a_usdt[:-4]
+        for s_a_b in [s for s in symbols if s.startswith(coin_a) and s != s_a_usdt]:
+            coin_b = s_a_b[len(coin_a):]
+            for s_b_c in [s for s in symbols if s.startswith(coin_b) and s not in (s_b_c, s_a_b)]:
+                coin_c = s_b_c[len(coin_b):]
+                for s_c_d in [s for s in symbols if s.startswith(coin_c) and s not in (s_b_c, s_a_b, s_a_usdt)]:
+                    coin_d = s_c_d[len(coin_c):]
+                    final = f"{coin_d}USDT"
+                    if not has(final):
+                        continue
+                    try:
+                        pa = price_map[s_a_usdt]
+                        pab = price_map[s_a_b]
+                        pbc = price_map[s_b_c]
+                        pcd = price_map[s_c_d]
+                        pfinal = price_map[final]
+                        final_usdt = (1.0 * (1 - TRADING_FEE) / pa) * pab * (1 - TRADING_FEE) * pbc * (1 - TRADING_FEE) * pcd * (1 - TRADING_FEE) * pfinal * (1 - TRADING_FEE)
+                        est_profit = final_usdt - 1.0
+                        if est_profit > 0.0002:
+                            opp = {
+                                "type": "penta",
+                                "path": [s_a_usdt, s_a_b, s_b_c, s_c_d, final],
+                                "est_profit_ratio": est_profit,
+                            }
+                            opportunities.append(opp)
+                    except Exception:
+                        continue
+
+
+    opportunities.sort(key=lambda x: x["est_profit_ratio"], reverse=True)
+    return opportunities[:10]
+
+async def sell_to_usdt(client: AsyncClient, asset: str) -> bool:
+    """Rollback function: sells the specified asset to USDT."""
+    symbol = f"{asset}USDT"
+    try:
+        balances = await client.get_account()
+        qty = 0.0
+        for bal in balances['balances']:
+            if bal['asset'] == asset:
+                qty = float(bal['free'])
+                break
+        if qty > 0:
+            info = await get_exchange_info(client, symbol)
+            if not info: return False
+            step_size = get_symbol_step_size(info)
+            min_notional = get_symbol_min_notional(info)
+            corrected_qty = floor_quantity_to_step_size(qty, step_size)
+            price = await get_price(client, symbol)
+            if corrected_qty * price < min_notional:
+                logger.warning(f"Rollback: Corrected quantity {corrected_qty} for {symbol} is too low to sell.")
+                return False
+            res = await place_market_order(client, symbol, SIDE_SELL, corrected_qty)
+            return bool(res)
+        return False
+    except Exception as e:
+        logger.error(f"Rollback failed for {asset}: {e}")
+        return False
+
+async def execute_arbitrage(client: AsyncClient, telegram_id: int, opportunity: dict, usd_amount: float):
+    """
+    Converts the opportunity path into actual market orders.
+    """
+    path = opportunity.get("path", [])
+    current_asset_quantity = usd_amount
+    
+    try:
+        for i, symbol in enumerate(path):
+            info = await get_exchange_info(client, symbol)
+            if not info:
+                logger.error(f"Could not get exchange info for {symbol}")
+                return False
+            min_notional = get_symbol_min_notional(info)
+
+            if symbol.endswith("USDT"):
+                price = await get_price(client, symbol)
+                if price <= 0: return False
+                raw_qty = current_asset_quantity / price
+                step_size = get_symbol_step_size(info)
+                qty = floor_quantity_to_step_size(raw_qty, step_size)
+                if qty * price < min_notional:
+                    logger.warning(f"Order quantity {qty} for {symbol} is below min notional {min_notional}.")
+                    return False
+                res = await place_market_order(client, symbol, SIDE_BUY, qty)
+                if not res: return False
+                current_asset_quantity = float(res['executedQty'])
+            else:
+                base_asset = info['baseAsset']
+                quote_asset = info['quoteAsset']
+                if path[i-1].endswith(base_asset):
+                    side = SIDE_SELL
+                    price = await get_price(client, symbol)
+                    if price <= 0: return False
+                    raw_qty = current_asset_quantity
+                    step_size = get_symbol_step_size(info)
+                    qty = floor_quantity_to_step_size(raw_qty, step_size)
+                    if qty * price < min_notional:
+                        logger.warning(f"Order quantity {qty} for {symbol} is below min notional {min_notional}.")
+                        return False
+                    res = await place_market_order(client, symbol, side, qty)
+                    if not res:
+                        await sell_to_usdt(client, base_asset)
+                        return False
+                    current_asset_quantity = float(res['executedQty'])
+                else:
+                    side = SIDE_BUY
+                    price = await get_price(client, symbol)
+                    if price <= 0: return False
+                    raw_qty = current_asset_quantity / price
+                    step_size = get_symbol_step_size(info)
+                    qty = floor_quantity_to_step_size(raw_qty, step_size)
+                    if qty * price < min_notional:
+                        logger.warning(f"Order quantity {qty} for {symbol} is below min notional {min_notional}.")
+                        return False
+                    res = await place_market_order(client, symbol, side, qty)
+                    if not res:
+                        await sell_to_usdt(client, quote_asset)
+                        return False
+                    current_asset_quantity = float(res['executedQty'])
+
+        final_usdt_quantity = current_asset_quantity
+        profit = final_usdt_quantity - usd_amount
+        add_trade(telegram_id, ",".join(path), profit)
+        logger.info(f"Arbitrage success! Final profit: {profit} USDT.")
+        return True
+    
+    except Exception as e:
+        logger.exception("execute_arbitrage error: %s", e)
+        path_assets = [p.replace('USDT', '') for p in path]
+        current_asset = path_assets[i]
+        await sell_to_usdt(client, current_asset)
+        return False
+
+# ----------------- أوامر البوت (Bot Commands) -----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(f"User {user_id} started the bot.")
+    await update.message.reply_text(
+        'مرحباً! أنا بوت تداول. استخدم الأوامر التالية:\n'
+        '\n'
+        '/set_api_keys <api_key> <api_secret>\n'
+        '/set_amount <amount>\n'
+        '/start_trading\n'
+        '/stop_trading'
     )
 
-@router.callback_query(F.data == "back_main")
-async def back_main(callback_query: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback_query.answer()
-    await callback_query.message.edit_text("🏠 القائمة الرئيسية", reply_markup=main_menu_keyboard())
-
-@router.callback_query(F.data == "menu_exchanges")
-async def menu_exchanges(callback_query: types.CallbackQuery, state: FSMContext):
-    await callback_query.answer()
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="Binance", callback_data="exchange_binance")],
-        [types.InlineKeyboardButton(text="🔙 العودة", callback_data="back_main")]
-    ])
-    await callback_query.message.edit_text("💹 اختر المنصة:", reply_markup=kb)
-    await state.set_state(ExchangeStates.choosing_exchange)
-
-@router.callback_query(F.data.startswith("exchange_"), StateFilter(ExchangeStates.choosing_exchange))
-async def select_exchange(callback_query: types.CallbackQuery, state: FSMContext):
-    await callback_query.answer()
-    exchange_name = callback_query.data.split("_")[1].capitalize()
-    await state.set_state(ExchangeStates.entering_api_key)
-    await state.update_data(exchange_name=exchange_name)
-    await callback_query.message.edit_text(f"🔑 أدخل API Key لـ {exchange_name}:", reply_markup=back_keyboard())
-
-@router.message(ExchangeStates.entering_api_key)
-async def enter_api_key(message: types.Message, state: FSMContext):
-    await state.update_data(api_key=message.text.strip())
-    await state.set_state(ExchangeStates.entering_secret)
-    await message.answer("🔒 أدخل Secret Key:", reply_markup=back_keyboard())
-
-@router.message(ExchangeStates.entering_secret)
-async def enter_secret(message: types.Message, state: FSMContext):
-    await state.update_data(secret=message.text.strip())
-    await state.set_state(ExchangeStates.entering_password)
-    await message.answer("🔑 أدخل Password (أو 'لا' إذا لم يكن موجوداً):", reply_markup=back_keyboard())
-
-@router.message(ExchangeStates.entering_password)
-async def enter_password(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    password = message.text.strip() if message.text.strip().lower() != "لا" else None
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-        if user:
-            db.query(ExchangeCredential).filter_by(user_id=user.id, exchange_id=data['exchange_name']).delete()
-            exchange = ExchangeCredential(user_id=user.id, exchange_id=data['exchange_name'], api_key=data['api_key'], secret=data['secret'], password=password)
-            db.add(exchange)
-    await state.clear()
-    await message.answer("✅ تم حفظ بيانات المنصة بنجاح!", reply_markup=main_menu_keyboard())
-
-@router.callback_query(F.data == "menu_investment")
-async def menu_investment(callback_query: types.CallbackQuery, state: FSMContext):
-    await callback_query.answer()
-    await state.set_state(InvestmentStates.entering_amount)
-    await callback_query.message.edit_text("💵 أدخل مبلغ الاستثمار (الحد الأدنى 5 USDT):", reply_markup=back_keyboard())
-
-@router.message(InvestmentStates.entering_amount)
-async def enter_investment_amount(message: types.Message, state: FSMContext):
+async def set_api_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        amount = float(message.text)
-        if amount < 5.0:
-            await message.answer("❌ المبلغ يجب ألا يقل عن 5 USDT. حاول مرة أخرى:")
-            return
-        with db_session() as db:
-            user = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-            if user:
-                user.base_investment = amount
-        await state.clear()
-        await message.answer(f"✅ تم تعيين مبلغ الاستثمار إلى {amount:.2f} USDT", reply_markup=main_menu_keyboard())
-    except ValueError:
-        await message.answer("❌ صيغة المبلغ غير صحيحة. يرجى إدخال رقم:")
+        api_key, api_secret = context.args
+        user_id = update.effective_user.id
+        save_user_api_keys(user_id, api_key, api_secret)
+        logger.info(f"API keys saved for user {user_id}.")
+        await update.message.reply_text("تم حفظ مفاتيح API بنجاح.")
+    except (IndexError, ValueError):
+        await update.message.reply_text("الرجاء إدخال المفاتيح بالشكل الصحيح: /set_api_keys <api_key> <api_secret>")
 
-@router.callback_query(F.data == "menu_settings")
-async def menu_settings(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    await callback_query.message.edit_text("⚙️ إعدادات التداول:", reply_markup=settings_keyboard())
+async def set_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        amount = float(context.args[0])
+        user_id = update.effective_user.id
+        save_amount(user_id, amount)
+        logger.info(f"Trading amount {amount} saved for user {user_id}.")
+        await update.message.reply_text(f"تم تعيين مبلغ التداول على {amount} دولار بنجاح.")
+    except (IndexError, ValueError):
+        await update.message.reply_text("الرجاء إدخال المبلغ بالشكل الصحيح: /set_amount <amount>")
 
-@router.callback_query(F.data.startswith("setting_"))
-async def handle_settings(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    setting_type, setting_value = callback_query.data.split("_")[1:]
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
-        if user:
-            if setting_type == "mode":
-                user.trading_mode = setting_value
-            elif setting_type == "risk":
-                user.risk_level = setting_value
-            await callback_query.message.edit_text(
-                f"✅ تم تحديث الإعداد: {setting_type} = {setting_value}",
-                reply_markup=main_menu_keyboard()
-            )
+async def start_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(f"Received start_trading command from {user_id}.")
+    await update.message.reply_text("بدء التداول...")
+    asyncio.create_task(start_arbitrage(user_id))
 
-@router.callback_query(F.data == "menu_start_trading")
-async def menu_start_trading(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
-        if user:
-            if user.investment_status == "running":
-                await callback_query.message.answer("البوت يعمل بالفعل. يمكنك إيقافه من القائمة الرئيسية.")
-                return
-            user.investment_status = "running"
-            await callback_query.message.edit_text("🚀 بدء التداول...", reply_markup=main_menu_keyboard())
-            # Start the trading cycle in a background task
-            asyncio.create_task(enhanced_trading_cycle(user.telegram_id, callback_query.bot))
+async def stop_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(f"Received stop_trading command from {user_id}.")
+    await update.message.reply_text("إيقاف التداول...")
+    await stop_arbitrage(user_id)
 
-@router.callback_query(F.data == "menu_stop_bot")
-async def menu_stop_bot(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
-        if user:
-            user.investment_status = "stopped"
-    await callback_query.message.edit_text("🛑 تم إيقاف البوت. لن يتم تنفيذ أي عمليات جديدة.", reply_markup=main_menu_keyboard())
+# ----------------- وظائف Flask (لإبقاء البوت نشطًا) -----------------
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "The bot is alive!"
 
-@router.callback_query(F.data == "menu_report")
-async def menu_report(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    with db_session() as db:
-        user = db.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
-        if user:
-            report = f"📊 <b>كشف الحساب</b>\n"
-            report += f"• إجمالي الربح: {user.total_profit:.6f} USDT\n"
-            report += f"• ربح اليوم: {user.daily_profit:.6f} USDT\n"
-            report += f"• آخر استثمار: {user.base_investment:.2f} USDT\n"
-            await callback_query.message.edit_text(report, reply_markup=main_menu_keyboard())
+def run_flask_app():
+    port = os.environ.get("PORT", 8080)
+    app.run(host='0.0.0.0', port=port)
 
-# -----------------
-# Main Function
-# -----------------
+# ----------------- التشغيل الرئيسي -----------------
 async def main():
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-    dp = Dispatcher()
-    dp.include_router(router)
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
+        return
+
+    application = Application.builder().token(bot_token).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("set_api_keys", set_api_keys))
+    application.add_handler(CommandHandler("set_amount", set_amount))
+    application.add_handler(CommandHandler("start_trading", start_trading_command))
+    application.add_handler(CommandHandler("stop_trading", stop_trading_command))
+
+    await application.run_polling(poll_interval=1)
+
+if __name__ == "__main__":
+    flask_thread = Thread(target=run_flask_app)
+    flask_thread.start()
     
-    logger.info("Starting bot...")
-    upgrade_database()
-    logger.info("Database tables checked/upgraded successfully.")
-
-    await dp.start_polling(bot, storage=MemoryStorage())
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
